@@ -1,6 +1,11 @@
 Change log for NuMPI
 ===================
 
+v0.8.0 (05June25)
+-----------------
+
+- ENH: `suggest_subdivision` is now part of the `Tools` package
+
 v0.7.3 (10Apr25)
 ----------------
 

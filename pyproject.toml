@@ -19,7 +19,8 @@ requires-python = ">=3.8.0"
 dynamic = ["version"]
 dependencies = [
     "DiscoverVersion",
-    "scipy>1.1.0"
+    "scipy>1.1.0",
+    "primefac"
 ]
 
 [project.optional-dependencies]
@@ -31,7 +32,6 @@ test = [
     "pytest",
     "pytest-cov",
     "pytest-flake8",
-    "primefac"
 ]
 
 [project.urls]

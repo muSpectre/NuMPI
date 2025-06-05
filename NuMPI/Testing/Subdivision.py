@@ -1,9 +1,3 @@
-import numpy as np
-from primefac import primefac
+# This file is deprecated and will be removed in a future release
 
-
-def suggest_subdivisions(nb_dims, nb_procs):
-    facs = list(primefac(nb_procs))
-    if len(facs) < nb_dims:
-        return facs + [1] * (nb_dims - len(facs))
-    return facs[: nb_dims - 1] + [np.prod(facs[nb_dims - 1:])]
+from ..Tools.Subdivision import suggest_subdivisions  # noqa: F401
