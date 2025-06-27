@@ -1,6 +1,11 @@
 Change log for NuMPI
 ===================
 
+v0.8.1 (27Jun25)
+----------------
+
+- MAINT: Fix compatibility with numpy 2.3
+
 v0.8.0 (05June25)
 -----------------
 
