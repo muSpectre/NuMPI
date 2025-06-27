@@ -33,7 +33,13 @@ from ast import literal_eval
 from itertools import product
 
 import numpy as np
-from numpy.lib.format import MAGIC_PREFIX, _filter_header, magic
+from numpy.lib.format import MAGIC_PREFIX, magic
+
+try:
+    from numpy.lib.format import _filter_header
+except ImportError:
+    # Moved here in numpy 2.3
+    from numpy.lib._format_impl import _filter_header
 
 from .. import MPI
 from ..Tools import Reduction
