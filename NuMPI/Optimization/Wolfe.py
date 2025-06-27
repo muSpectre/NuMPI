@@ -40,7 +40,7 @@ def first_wolfe_condition(fun, x0, fprime, direction, alpha, beta1):
     beta1       -- lower wolfe bound
     """
     return (fun(x0 + alpha * direction) <= fun(x0) +
-            alpha * beta1 * float(np.dot(fprime(x0).T, direction)))
+            alpha * beta1 * np.dot(fprime(x0).T, direction).item())
 
 
 def second_wolfe_condition(x0, fprime, direction, alpha, beta2):
@@ -54,5 +54,5 @@ def second_wolfe_condition(x0, fprime, direction, alpha, beta2):
     alpha     -- step size
     beta2     -- upper wolfe bound
     """
-    return (float(np.dot(fprime(x0 + alpha * direction).T, direction)) >=
-            beta2 * float(np.dot(fprime(x0).T, direction)))
+    return (np.dot(fprime(x0 + alpha * direction).T, direction).item() >=
+            beta2 * np.dot(fprime(x0).T, direction).item())
