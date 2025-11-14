@@ -92,6 +92,7 @@ def _chunked_read_write(
     fortran_order,
     data,
     comm,
+    **kwargs,
 ):
     nb_dims = len(nb_grid_pts)
     if fortran_order:
@@ -121,9 +122,10 @@ def _chunked_read_write(
     nb_max_subdomain_grid_pts = np.empty_like(nb_subdomain_grid_pts)
     comm.Allreduce(
         np.array(nb_subdomain_grid_pts, order="C"),
-        np.array(nb_max_subdomain_grid_pts, order="C"),
+        nb_max_subdomain_grid_pts,
         op=MPI.MAX,
     )
+    nb_max_subdomain_grid_pts = np.array(nb_max_subdomain_grid_pts, order="C")
 
     # Loop over slowest axes
     for subdomain_coords in product(
@@ -264,7 +266,9 @@ def mpi_read_bytes(file, nbytes):
     return buf.tobytes()
 
 
-def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD):
+def save_npy(
+    fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD, **kwargs
+):
     """
 
     Parameters
@@ -346,6 +350,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         fortran_order,
         data,
         comm,
+        **kwargs,
     )
 
     # Close file
