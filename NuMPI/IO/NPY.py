@@ -83,15 +83,16 @@ _chunked_op = {
 
 
 def _chunked_read_write(
-    file,
-    chunk_op,
-    header_len,
-    nb_grid_pts,
-    nb_subdomain_grid_pts,
-    subdomain_locations,
-    fortran_order,
-    data,
-    comm,
+        file,
+        chunk_op,
+        header_len,
+        nb_grid_pts,
+        nb_subdomain_grid_pts,
+        subdomain_locations,
+        fortran_order,
+        data,
+        comm,
+        **kwargs
 ):
     nb_dims = len(nb_grid_pts)
     if fortran_order:
@@ -121,13 +122,15 @@ def _chunked_read_write(
     nb_max_subdomain_grid_pts = np.empty_like(nb_subdomain_grid_pts)
     comm.Allreduce(
         np.array(nb_subdomain_grid_pts, order="C"),
-        np.array(nb_max_subdomain_grid_pts, order="C"),
+        nb_max_subdomain_grid_pts,
         op=MPI.MAX,
     )
+    nb_max_subdomain_grid_pts = np.array(nb_max_subdomain_grid_pts, order="C")
+
 
     # Loop over slowest axes
     for subdomain_coords in product(
-        *(range(nb_max_subdomain_grid_pts[axis]) for axis in axes[:-2])
+            *(range(nb_max_subdomain_grid_pts[axis]) for axis in axes[:-2])
     ):
         offset = 0
         # Compute offset of slow axes that include the current coordinate
@@ -264,7 +267,8 @@ def mpi_read_bytes(file, nbytes):
     return buf.tobytes()
 
 
-def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD):
+def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD,
+                                                                        ** kwargs):
     """
 
     Parameters
@@ -287,7 +291,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
     # Idiot check: Dimensions of the buffers
     nb_dims = len(data.shape)
     assert (
-        len(nb_grid_pts) == nb_dims
+            len(nb_grid_pts) == nb_dims
     ), "`nb_grid_pts` must have the same number of dimensions as the data`"
 
     # If subdomain locations are missing, we assume the buffer sits at the origin
@@ -295,7 +299,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         subdomain_locations = (0,) * nb_dims
     else:
         assert (
-            len(subdomain_locations) == nb_dims
+                len(subdomain_locations) == nb_dims
         ), "`subdomain_locations` must have the same number of dimensions as the data`"
     nb_subdomain_grid_pts = data.shape
 
@@ -346,6 +350,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         fortran_order,
         data,
         comm,
+        **kwargs
     )
 
     # Close file
@@ -353,7 +358,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
 
 
 def load_npy(
-    fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD
+        fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD
 ):
     file = NPYFile(fn, comm)
     data = file.read(subdomain_locations, nb_subdomain_grid_pts)
