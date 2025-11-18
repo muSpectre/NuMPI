@@ -63,11 +63,16 @@ def cast_mpi_types(
     elementary_type = MPI._typedict[numpy_dtype.char]
     if components_are_contiguous:
         elementary_type = elementary_type.Create_contiguous(components_size)
-    file_type = elementary_type.Create_subarray(
-        nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, MPI.ORDER_F if fortran_order else MPI.ORDER_C)
-    if not components_are_contiguous:
-        file_type = file_type.Create_contiguous(components_size)
+    try:
+        file_type = elementary_type.Create_subarray(
+            nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, MPI.ORDER_F if fortran_order else MPI.ORDER_C)
+        if not components_are_contiguous:
+            file_type = file_type.Create_contiguous(components_size)
+    except MPI.Exception:
+        # This is for the process that gets zero elements
+        file_type = elementary_type.Create_contiguous(0)
 
+    # Use context to gaurantee that the types will be freed
     elementary_type.Commit()
     file_type.Commit()
     try:
