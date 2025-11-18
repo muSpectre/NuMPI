@@ -73,16 +73,17 @@ class Datatype(object):
 
     def Create_vector(self, count, blocklength, stride):
         return VectorDatatype(self, count, blocklength, stride)
-    
+
     def Create_contiguous(self, count):
         return VectorDatatype(self, count, 1, 1)
 
     def Create_subarray(self, sizes, subsizes, starts, order):
         assert len(sizes) == len(subsizes)
-        new_type = self
-        for [size, subsize] in zip(sizes, subsizes):
-            new_type = new_type.Create_vector(1, subsize, size)
-        return new_type
+        # new_type = self
+        # for [size, subsize] in zip(sizes, subsizes):
+        #     new_type = new_type.Create_vector(1, subsize, size)
+        # return new_type
+        return VectorDatatype(self, 1, np.multiply.reduce(subsizes), np.multiply.reduce(sizes))
 
     def Get_size(self):
         return self._dtype.itemsize
