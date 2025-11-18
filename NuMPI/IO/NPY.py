@@ -133,7 +133,7 @@ class NPYFile(MPIFileView):
                 self.file.Close()
             raise err
 
-    def read(self, subdomain_locations=None, nb_subdomain_grid_pts=None):
+    def read(self, subdomain_locations=None, nb_subdomain_grid_pts=None, nb_components=1, components_are_leading=True):
         nb_dims = len(self.nb_grid_pts)
         if subdomain_locations is None:
             subdomain_locations = (0,) * nb_dims
@@ -141,7 +141,7 @@ class NPYFile(MPIFileView):
             nb_subdomain_grid_pts = self.nb_grid_pts
 
         data = np.empty(nb_subdomain_grid_pts, dtype=self.dtype, order='F' if self.fortran_order else 'C')
-        with cast_mpi_types(data.dtype, self.nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, 1, self.fortran_order, True) as [etype, filetype]:
+        with cast_mpi_types(data.dtype, self.nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
             self.file.Read_all(data)
         return data
@@ -183,7 +183,7 @@ def mpi_read_bytes(file, nbytes):
     return buf.tobytes()
 
 
-def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD):
+def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=1, components_are_leading=True):
     """
 
     Parameters
@@ -256,7 +256,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         file.Write(arr_dict_str.encode("latin-1"))
 
     # Write data
-    with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, 1, fortran_order, False) as [etype, filetype]:
+    with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, fortran_order, components_are_leading) as [etype, filetype]:
         file.Set_view(header_length, etype, filetype)
         file.Write_all(data)
 
@@ -265,9 +265,9 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
 
 
 def load_npy(
-    fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD
+    fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=1, components_are_leading=True
 ):
     file = NPYFile(fn, comm)
-    data = file.read(subdomain_locations, nb_subdomain_grid_pts)
+    data = file.read(subdomain_locations, nb_subdomain_grid_pts, nb_components, components_are_leading)
     file.close()
     return data
