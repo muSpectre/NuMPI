@@ -55,22 +55,21 @@ def cast_mpi_types(
         nb_components: Union[int, Sequence[int]],
         fortran_order: bool, components_are_leading: bool):
 
-    components_size = np.multiply.reduce(nb_components)
-    # either fortran order & components leading, or C order & components trailing
-    components_are_contiguous = fortran_order ^ (not components_are_leading)
-
-    # NOTE: mpi4py.util.dtlib.from_numpy_dtype should be more proper?
+    # get the corresponding MPI Datatype
     elementary_type = MPI._typedict[numpy_dtype.char]
-    if components_are_contiguous:
-        elementary_type = elementary_type.Create_contiguous(components_size)
-    try:
+    if np.multiply.reduce(nb_subdomain_grid_pts) == 0:
+        # For the process that gets zero elements, cast a filetype that eventually doesn't read / write
+        file_type = elementary_type.Create_contiguous(0)
+    else:
+        components_size = np.multiply.reduce(nb_components)
+        # either fortran order & components leading, or C order & components trailing -> components are contiguous
+        components_are_contiguous = fortran_order ^ (not components_are_leading)
+        if components_are_contiguous:
+            elementary_type = elementary_type.Create_contiguous(components_size)
         file_type = elementary_type.Create_subarray(
             nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, MPI.ORDER_F if fortran_order else MPI.ORDER_C)
         if not components_are_contiguous:
             file_type = file_type.Create_contiguous(components_size)
-    except MPI.Exception:
-        # This is for the process that gets zero elements
-        file_type = elementary_type.Create_contiguous(0)
 
     # Use context to gaurantee that the types will be freed
     elementary_type.Commit()
