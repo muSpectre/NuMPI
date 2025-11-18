@@ -46,34 +46,38 @@ from ..Tools import Reduction
 from .common import MPIFileTypeError, MPIFileView
 
 
-def _chunked_write(file, subdomain_coords, nb_subdomain_grid_pts, fortran_order, data):
-    try:
-        if fortran_order:
-            chunk = data.T[subdomain_coords]
-        else:
-            chunk = data[subdomain_coords]
-    except IndexError:
-        chunk = np.empty((0,), dtype=data.dtype)  # Nothing to write
-    file.Write_all(chunk)
+# def _chunked_write(file, subdomain_coords, nb_subdomain_grid_pts, fortran_order, data):
+#     try:
+#         if fortran_order:
+#             chunk = data.T[subdomain_coords]
+#         else:
+#             chunk = data[subdomain_coords]
+#     except IndexError:
+#         chunk = np.empty((0,), dtype=data.dtype)  # Nothing to write
+#     file.Write_all(chunk)
+def _chunked_write(file, data):
+    file.Write_all(data)
 
 
-def _chunked_read(file, subdomain_coords, nb_subdomain_grid_pts, fortran_order, data):
-    if fortran_order:
-        chunk = np.empty(
-            (nb_subdomain_grid_pts[1], nb_subdomain_grid_pts[0]),
-            dtype=data.dtype,
-        )
-    else:
-        try:
-            chunk = data[subdomain_coords]
-        except IndexError:
-            chunk = np.empty((0,), dtype=data.dtype)  # Nothing to read
-    file.Read_all(chunk)
-    if fortran_order:
-        try:
-            data.T[subdomain_coords] = chunk
-        except IndexError:
-            pass
+# def _chunked_read(file, subdomain_coords, nb_subdomain_grid_pts, fortran_order, data):
+#     if fortran_order:
+#         chunk = np.empty(
+#             (nb_subdomain_grid_pts[1], nb_subdomain_grid_pts[0]),
+#             dtype=data.dtype,
+#         )
+#     else:
+#         try:
+#             chunk = data[subdomain_coords]
+#         except IndexError:
+#             chunk = np.empty((0,), dtype=data.dtype)  # Nothing to read
+#     file.Read_all(chunk)
+#     if fortran_order:
+#         try:
+#             data.T[subdomain_coords] = chunk
+#         except IndexError:
+#             pass
+def _chunked_read(file, data):
+    file.Read_all(data)
 
 
 _chunked_op = {
@@ -89,63 +93,87 @@ def _chunked_read_write(
     nb_grid_pts,
     nb_subdomain_grid_pts,
     subdomain_locations,
-    fortran_order,
+    nb_components: int | Sequence[int],
+    fortran_order: bool,
+    components_are_leading: bool,
     data,
     comm,
 ):
-    nb_dims = len(nb_grid_pts)
-    if fortran_order:
-        # The data is in Fortran order in the file AND in memory. We flip the axes for
-        # reading and writing, such that the last index is consecutive in memory.
-        axes = tuple(range(nb_dims - 1, -1, -1))
-    else:
-        axes = tuple(range(nb_dims))
+    # nb_dims = len(nb_grid_pts)
+    # if fortran_order:
+    #     # The data is in Fortran order in the file AND in memory. We flip the axes for
+    #     # reading and writing, such that the last index is consecutive in memory.
+    #     axes = tuple(range(nb_dims - 1, -1, -1))
+    # else:
+    #     axes = tuple(range(nb_dims))
 
-    mpitype = MPI._typedict[data.dtype.char]
-    # see MPI_TYPE_VECTOR
-    filetype = mpitype.Create_vector(
-        # number of blocks: length of data in the non-contiguous direction
-        nb_subdomain_grid_pts[axes[-2]] if nb_dims > 1 else 1,
-        # length of block: length of data in contiguous direction
-        nb_subdomain_grid_pts[axes[-1]],
-        # stride: the data is contiguous in z direction,
-        # two matrix elements with same x position are separated by ny*nz in memory
-        nb_grid_pts[axes[-1]],
-    )  # create a type
-    filetype.Commit()  # verification if type is OK
+    # mpitype = MPI._typedict[data.dtype.char]
+    # # see MPI_TYPE_VECTOR
+    # filetype = mpitype.Create_vector(
+    #     # number of blocks: length of data in the non-contiguous direction
+    #     nb_subdomain_grid_pts[axes[-2]] if nb_dims > 1 else 1,
+    #     # length of block: length of data in contiguous direction
+    #     nb_subdomain_grid_pts[axes[-1]],
+    #     # stride: the data is contiguous in z direction,
+    #     # two matrix elements with same x position are separated by ny*nz in memory
+    #     nb_grid_pts[axes[-1]],
+    # )  # create a type
+    # filetype.Commit()  # verification if type is OK
 
-    # Get maximum number of subdomain grid pts. We need this such that the loop below
-    # is symmetrically carried out on all MPI processes. MPI processes with fewer
-    # subdomain grid points may then end up doing nothing (but they need to call the
-    # MPI write command to avoid locking up the execution).
-    nb_max_subdomain_grid_pts = np.empty_like(nb_subdomain_grid_pts)
-    comm.Allreduce(
-        np.array(nb_subdomain_grid_pts, order="C"),
-        np.array(nb_max_subdomain_grid_pts, order="C"),
-        op=MPI.MAX,
-    )
+    # # Get maximum number of subdomain grid pts. We need this such that the loop below
+    # # is symmetrically carried out on all MPI processes. MPI processes with fewer
+    # # subdomain grid points may then end up doing nothing (but they need to call the
+    # # MPI write command to avoid locking up the execution).
+    # nb_max_subdomain_grid_pts = np.empty_like(nb_subdomain_grid_pts)
+    # comm.Allreduce(
+    #     np.array(nb_subdomain_grid_pts, order="C"),
+    #     np.array(nb_max_subdomain_grid_pts, order="C"),
+    #     op=MPI.MAX,
+    # )
 
-    # Loop over slowest axes
-    for subdomain_coords in product(
-        *(range(nb_max_subdomain_grid_pts[axis]) for axis in axes[:-2])
-    ):
-        offset = 0
-        # Compute offset of slow axes that include the current coordinate
-        for axis, coord in zip(axes[:-2], subdomain_coords):
-            offset = offset * nb_grid_pts[axis] + subdomain_locations[axis] + coord
-        # Add offset of the current subdomain to fast axes
-        for axis in axes[-2:]:
-            offset = offset * nb_grid_pts[axis] + subdomain_locations[axis]
+    # # Loop over slowest axes
+    # for subdomain_coords in product(
+    #     *(range(nb_max_subdomain_grid_pts[axis]) for axis in axes[:-2])
+    # ):
+    #     offset = 0
+    #     # Compute offset of slow axes that include the current coordinate
+    #     for axis, coord in zip(axes[:-2], subdomain_coords):
+    #         offset = offset * nb_grid_pts[axis] + subdomain_locations[axis] + coord
+    #     # Add offset of the current subdomain to fast axes
+    #     for axis in axes[-2:]:
+    #         offset = offset * nb_grid_pts[axis] + subdomain_locations[axis]
 
-        file.Set_view(
-            header_len + offset * mpitype.Get_size(),
-            filetype=filetype,
-        )
-        _chunked_op[chunk_op](
-            file, subdomain_coords, nb_subdomain_grid_pts, fortran_order, data
-        )
+    #     file.Set_view(
+    #         header_len + offset * mpitype.Get_size(),
+    #         filetype=filetype,
+    #     )
+    #     _chunked_op[chunk_op](
+    #         file, subdomain_coords, nb_subdomain_grid_pts, fortran_order, data
+    #     )
 
-    filetype.Free()
+    # filetype.Free()
+
+
+    components_size = np.multiply.reduce(nb_components)
+    # either fortran order & components leading, or C order & components trailing
+    components_are_contiguous = fortran_order ^ (not components_are_leading)
+
+    # NOTE: mpi4py.util.dtlib.from_numpy_dtype should be more proper?
+    elementary_type = MPI._typedict[data.dtype.char]
+    if components_are_contiguous:
+        elementary_type = elementary_type.Create_contiguous(components_size)
+    file_type = elementary_type.Create_subarray(
+        nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, MPI.ORDER_F if fortran_order else MPI.ORDER_C)
+    if not components_are_contiguous:
+        file_type = file_type.Create_contiguous(components_size)
+    elementary_type.Commit()
+    file_type.Commit()
+
+    file.Set_view(header_len, etype=elementary_type, filetype=file_type)
+    _chunked_op[chunk_op](file, data)
+
+    elementary_type.free()
+    file_type.free()
 
 
 class NPYFile(MPIFileView):
@@ -211,7 +239,7 @@ class NPYFile(MPIFileView):
         if nb_subdomain_grid_pts is None:
             nb_subdomain_grid_pts = self.nb_grid_pts
 
-        data = np.empty(nb_subdomain_grid_pts, dtype=self.dtype)
+        data = np.empty(nb_subdomain_grid_pts, dtype=self.dtype, order='F' if self.fortran_order else 'C')
 
         _chunked_read_write(
             self.file,
@@ -220,7 +248,9 @@ class NPYFile(MPIFileView):
             self.nb_grid_pts,
             nb_subdomain_grid_pts,
             subdomain_locations,
+            1,  # nb_components
             self.fortran_order,
+            True,  # components_are_leading
             data,
             self.comm,
         )
@@ -307,7 +337,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
     # This indicates whether the data is written in "Fortran" order (column-major, i.e.
     # the first index is consecutive in memory). Since we do not want to copy the data
     # buffer, we just write to the file in the storage order that we find in memory.
-    # We need to check across all MPI processes as two-dimension arrays where on
+    # We need to check across all MPI processes as two-dimension arrays where one
     # dimension has length unity report as both C-contiguous and F-contiguous.
     # (The storage order is ambiguous in this case.)
     fortran_order = bool(
@@ -323,6 +353,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         }
     )
 
+    # Pad header until aligned (required by NPY format)
     while (len(arr_dict_str) + len(magic_str) + 2) % 16 != 15:
         arr_dict_str += " "
     arr_dict_str += "\n"
@@ -343,7 +374,9 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         nb_grid_pts,
         nb_subdomain_grid_pts,
         subdomain_locations,
+        1,  # nb_components
         fortran_order,
+        False,  # components_are_leading
         data,
         comm,
     )
