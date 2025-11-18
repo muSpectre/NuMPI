@@ -31,7 +31,7 @@ MPI-parallel writing of arrays in numpy's 'npy' format.
 import struct
 from ast import literal_eval
 import contextlib
-from typing import Sequence
+from typing import Sequence, Union
 
 import numpy as np
 from numpy.lib.format import MAGIC_PREFIX, magic
@@ -52,7 +52,7 @@ def cast_mpi_types(
         numpy_dtype: np.dtype, nb_grid_pts: Sequence[int],
         nb_subdomain_grid_pts: Sequence[int],
         subdomain_locations: Sequence[int],
-        nb_components: int | Sequence[int],
+        nb_components: Union[int, Sequence[int]],
         fortran_order: bool, components_are_leading: bool):
 
     components_size = np.multiply.reduce(nb_components)
