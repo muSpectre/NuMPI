@@ -77,8 +77,8 @@ def cast_mpi_types(
     try:
         yield elementary_type, file_type
     finally:
-        elementary_type.free()
-        file_type.free()
+        elementary_type.Free()
+        file_type.Free()
 
 
 class NPYFile(MPIFileView):
