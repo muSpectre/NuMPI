@@ -33,26 +33,42 @@ implement it and submit it back to us.
 """
 
 from enum import Enum
+from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
 from io import TextIOBase
 
 
+# ## Layout
+class Layout(Enum):
+    ORDER_C = 0
+    ORDER_F = 1
+
+
+ORDER_C = Layout.ORDER_C
+ORDER_F = Layout.ORDER_F
+
+
 # ## Data types
 
 
-class VectorDatatype(object):
-    def __init__(self, oldtype, count, blocklength, stride):
-        if stride != blocklength:
-            raise NotImplementedError(
-                "Only vector datatypes with stride == blocklength are "
-                "presently supported by "
-                "the MPI stub interface."
-            )
-        self._oldtype = oldtype
-        self._count = count
-        self._blocklength = blocklength
-        self._stride = stride
+@dataclass(init=True)
+class Datatype(object):
+    _type_sigatures: Sequence[np.dtype]
+    _displacements: Sequence[int]
+
+    def Get_size(self):
+        """Return the number of bytes occupied by entries in the datatype."""
+        return np.multiply.reduce([dtype.itemsize for dtype in self._type_sigatures])
+
+    def Get_extent(self):
+        """Return lower bound and extent of datatype."""
+        lb = min(self._displacements)
+        # FIXME: alignment?
+        i_ub = int(np.argmax(self._displacements))
+        ub = self._displacements[i_ub] + self._type_sigatures[i_ub].itemsize
+        return lb, ub - lb
 
     def Commit(self):
         pass
@@ -60,33 +76,65 @@ class VectorDatatype(object):
     def Free(self):
         pass
 
-    def Get_size(self):
-        return self._count * self._blocklength * self._oldtype.Get_size()
+    def Create_contiguous(self, count):
+        """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_CONTIGUOUS"""
+        # Type signatures are simply repeated
+        type_sigs = list(self._type_sigatures) * count
 
-    def _get_oldtype(self):
-        return self._oldtype
-
-
-class Datatype(object):
-    def __init__(self, name):
-        self._dtype = np.dtype(name)
+        # Add corresponding displacements for each repetition
+        displs = np.tile(self._displacements, count).reshape(count, -1)
+        [_, extent] = self.Get_extent()
+        for i_count in range(count):
+            displs[i_count] += i_count * extent
+        return Datatype(type_sigs, displs.ravel().tolist())
 
     def Create_vector(self, count, blocklength, stride):
-        return VectorDatatype(self, count, blocklength, stride)
+        """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_VECTOR"""
+        # Type signatures are simply repeated
+        type_sigs = list(self._type_sigatures) * (count * blocklength)
 
-    def Create_contiguous(self, count):
-        return VectorDatatype(self, count, 1, 1)
+        # Add corresponding displacements for each repetition
+        displs = np.tile(self._displacements, [count, blocklength]).reshape(count, blocklength, -1)
+        [_, extent] = self.Get_extent()
+        for i_count in range(count):
+            for i_block in range(blocklength):
+                displs[i_count, i_block] += (i_count * stride + i_block) * extent
+        return Datatype(type_sigs, displs.ravel().tolist())
 
     def Create_subarray(self, sizes, subsizes, starts, order):
-        assert len(sizes) == len(subsizes)
-        # new_type = self
-        # for [size, subsize] in zip(sizes, subsizes):
-        #     new_type = new_type.Create_vector(1, subsize, size)
-        # return new_type
-        return VectorDatatype(self, 1, np.multiply.reduce(subsizes), np.multiply.reduce(sizes))
+        """Refer to MPI 5.0 Doc 5.1.3 Subarray Datatype Constructor MPI_TYPE_CREATE_SUBARRAY"""
+        # check
+        nb_dim = len(sizes)
+        assert len(subsizes) == nb_dim
+        assert len(starts) == nb_dim
+        assert order in [ORDER_C, ORDER_F]
 
-    def Get_size(self):
-        return self._dtype.itemsize
+        # Type signatures are simply repeated
+        type_sigs = list(self._type_sigatures) * np.multiply.reduce(subsizes)
+
+        # More or less a multidimensional version of 'Create_vector', plus some extra offsets due to 'starts'
+        displs = np.tile(self._displacements, subsizes).reshape(*subsizes, -1)
+        [_, extent] = self.Get_extent()
+        start_offsets = np.asarray(starts)
+
+        # Compute strides
+        if order is ORDER_F:
+            strides = np.multiply.accumulate([1, *sizes])[:-1]
+        else:  # order is ORDER_C
+            strides = np.flip(np.multiply.accumulate(np.flip([*sizes, 1]))[:-1])
+
+        # Add corresponding displacements for each repetition
+        for indices in np.ndindex(subsizes):
+            displs[indices] += np.dot(start_offsets + indices, strides) * extent
+
+        return Datatype(type_sigs, displs.ravel().tolist()) 
+
+
+class BasicDatatype(Datatype):
+
+    def __init__(self, name):
+        self._type_sigatures = [np.dtype(name)]
+        self._displacements = [0]
 
     def _end_of_block(self, position):
         return None, None
@@ -94,7 +142,7 @@ class Datatype(object):
 
 class Typedict(object):
     def __getitem__(self, item):
-        return Datatype(item)
+        return BasicDatatype(item)
 
 
 _typedict = Typedict()
