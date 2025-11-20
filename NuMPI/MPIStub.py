@@ -351,6 +351,7 @@ class File(object):
         return self._file.tell() - self._disp
 
     def Read(self, buf):
+        # FIXME: it doesn't really use the etype and filetype
         try:
             data = self._file.read(buf.size * buf.itemsize)
             buf[...] = np.frombuffer(
@@ -369,6 +370,9 @@ class File(object):
         self._filetype = filetype
 
     def Write(self, buf):
+        # FIXME: it doesn't really use the etype and filetype
+        if isinstance(buf, np.ndarray):
+            buf = buf.tobytes(order='F' if not buf.flags.c_contiguous else 'C')
         self._file.write(buf)
 
     Write_all = Write
