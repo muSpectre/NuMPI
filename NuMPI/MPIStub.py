@@ -353,9 +353,9 @@ class File(object):
     def Read(self, buf):
         try:
             data = self._file.read(buf.size * buf.itemsize)
-            buf[...] = np.frombuffer(data, count=buf.size, dtype=buf.dtype).reshape(
-                buf.shape
-            )
+            buf[...] = np.frombuffer(
+                data, count=buf.size, dtype=buf.dtype).reshape(
+                buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
         except Exception:
             if not self.already_open:
                 self.close()
