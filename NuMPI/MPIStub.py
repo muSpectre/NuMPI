@@ -33,8 +33,7 @@ implement it and submit it back to us.
 """
 
 from enum import Enum
-from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence, Optional
 
 import numpy as np
 from io import TextIOBase
@@ -53,22 +52,35 @@ ORDER_F = Layout.ORDER_F
 # ## Data types
 
 
-@dataclass(init=True)
 class Datatype(object):
-    _type_sigatures: Sequence[np.dtype]
-    _displacements: Sequence[int]
+    
+    def __init__(
+            self, type_sigatures: Sequence[np.dtype],
+            displacements: Sequence[int],
+            lower_bound: Optional[int] = None, upper_bound: Optional[int] = None):
+        assert len(type_sigatures) == len(displacements)
+        self._type_sigatures = type_sigatures
+        self._displacements = displacements
+        if lower_bound is None:
+            try:
+                lower_bound = min(self._displacements)
+            except ValueError:
+                lower_bound = 0
+        self._lower_bound = lower_bound
+        if upper_bound is None:
+            try:
+                idx = int(np.argmax(self._displacements))
+                upper_bound = self._displacements[idx] + self._type_sigatures[idx].itemsize
+            except ValueError:
+                upper_bound = 0
+        self._upper_bound = upper_bound
 
     def Get_size(self):
         """Return the number of bytes occupied by entries in the datatype."""
         return np.multiply.reduce([dtype.itemsize for dtype in self._type_sigatures])
 
     def Get_extent(self):
-        """Return lower bound and extent of datatype."""
-        lb = min(self._displacements)
-        # FIXME: alignment?
-        i_ub = int(np.argmax(self._displacements))
-        ub = self._displacements[i_ub] + self._type_sigatures[i_ub].itemsize
-        return lb, ub - lb
+        return self._lower_bound, self._upper_bound - self._lower_bound
 
     def Commit(self):
         pass
@@ -76,8 +88,13 @@ class Datatype(object):
     def Free(self):
         pass
 
+    free = Free
+
     def Create_contiguous(self, count):
         """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_CONTIGUOUS"""
+        if count == 0:
+            return Datatype([], [])
+
         # Type signatures are simply repeated
         type_sigs = list(self._type_sigatures) * count
 
@@ -90,6 +107,9 @@ class Datatype(object):
 
     def Create_vector(self, count, blocklength, stride):
         """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_VECTOR"""
+        if count == 0 or blocklength == 0:
+            return Datatype([], [])
+
         # Type signatures are simply repeated
         type_sigs = list(self._type_sigatures) * (count * blocklength)
 
@@ -109,6 +129,9 @@ class Datatype(object):
         assert len(starts) == nb_dim
         assert order in [ORDER_C, ORDER_F]
 
+        if np.any(subsizes == 0):
+            return Datatype([], [])
+
         # Type signatures are simply repeated
         type_sigs = list(self._type_sigatures) * np.multiply.reduce(subsizes)
 
@@ -127,14 +150,16 @@ class Datatype(object):
         for indices in np.ndindex(subsizes):
             displs[indices] += np.dot(start_offsets + indices, strides) * extent
 
-        return Datatype(type_sigs, displs.ravel().tolist()) 
+        # For subarray, the lb and ub are the begin and end for the whole array
+        lb = 0
+        ub = extent * np.multiply.reduce(sizes)
+        return Datatype(type_sigs, displs.ravel().tolist(), lb, ub) 
 
 
 class BasicDatatype(Datatype):
 
     def __init__(self, name):
-        self._type_sigatures = [np.dtype(name)]
-        self._displacements = [0]
+        super().__init__([np.dtype(name)], [0])
 
     def _end_of_block(self, position):
         return None, None

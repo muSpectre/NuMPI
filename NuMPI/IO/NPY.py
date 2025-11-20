@@ -77,8 +77,8 @@ def cast_mpi_types(
     try:
         yield elementary_type, file_type
     finally:
-        elementary_type.Free()
-        file_type.Free()
+        elementary_type.free()
+        file_type.free()
 
 
 class NPYFile(MPIFileView):
@@ -127,6 +127,7 @@ class NPYFile(MPIFileView):
             # assertions
             self.dtype = np.dtype(d["descr"])
             self.fortran_order = d["fortran_order"]
+            # TODO: it needs to judge nb_components
             self.nb_grid_pts = d["shape"]
             self.data_start = self.file.Get_position()
 
@@ -237,6 +238,7 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         Reduction(comm).any(data.flags.f_contiguous and not data.flags.c_contiguous)
     )
 
+    # TODO: change shape according to nb_components
     # This is the NPY file header - a stringified dict
     arr_dict_str = str(
         {
