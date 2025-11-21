@@ -53,34 +53,60 @@ ORDER_F = Layout.ORDER_F
 
 
 class Datatype(object):
+    """
+    Because the datatype in Stub is solely for File I/O purpose, the class assumes the datatype is always 
+    some sections (chunks) of a numpy array.
+    """
     
+    _numpy_type: np.dtype
+    """Base element"""
+    _chunk_positions: Sequence[int]
+    """In unit of elements"""
+    _chunk_sizes: Sequence[int]
+    """In unit of elements"""
+    _lower_bound: int
+    """In unit of elements"""
+    _upper_bound: int
+    """In unit of elements"""
+
     def __init__(
-            self, type_sigatures: Sequence[np.dtype],
-            displacements: Sequence[int],
+            self, numpy_type: np.dtype, chunk_positions: Sequence[int],
+            chunk_sizes: Sequence[int],
             lower_bound: Optional[int] = None, upper_bound: Optional[int] = None):
-        assert len(type_sigatures) == len(displacements)
-        self._type_sigatures = type_sigatures
-        self._displacements = displacements
+        self._numpy_type = numpy_type
+
+        # Check
+        assert len(chunk_positions) == len(chunk_sizes)
+        try:
+            # Sort such that chunk positions are monotonically increasing
+            [chunk_positions, chunk_sizes] = zip(*sorted(zip(chunk_positions, chunk_sizes)))
+        except ValueError:
+            # when there is no chunk specified (empty lists)
+            pass
+        self._chunk_positions = chunk_positions
+        self._chunk_sizes = chunk_sizes
+
+        # Default value
         if lower_bound is None:
             try:
-                lower_bound = min(self._displacements)
-            except ValueError:
+                lower_bound = self._chunk_positions[0]
+            except IndexError:
+                # when there is no chunk specified (empty lists)
                 lower_bound = 0
         self._lower_bound = lower_bound
+
+        # Default value
         if upper_bound is None:
             try:
-                idx = int(np.argmax(self._displacements))
-                upper_bound = self._displacements[idx] + self._type_sigatures[idx].itemsize
-            except ValueError:
+                upper_bound = self._chunk_positions[-1] + self._chunk_sizes[-1]
+            except IndexError:
+                # when there is no chunk specified (empty lists)
                 upper_bound = 0
         self._upper_bound = upper_bound
 
     def Get_size(self):
         """Return the number of bytes occupied by entries in the datatype."""
-        return np.multiply.reduce([dtype.itemsize for dtype in self._type_sigatures])
-
-    def Get_extent(self):
-        return self._lower_bound, self._upper_bound - self._lower_bound
+        return np.multiply.reduce(self._chunk_sizes) * self._numpy_type.itemsize
 
     def Commit(self):
         pass
@@ -92,52 +118,53 @@ class Datatype(object):
 
     def Create_contiguous(self, count):
         """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_CONTIGUOUS"""
+        # Special case
         if count == 0:
-            return Datatype([], [])
+            return Datatype(self._numpy_type, [], [])
 
-        # Type signatures are simply repeated
-        type_sigs = list(self._type_sigatures) * count
-
-        # Add corresponding displacements for each repetition
-        displs = np.tile(self._displacements, count).reshape(count, -1)
-        [_, extent] = self.Get_extent()
+        # Add corresponding offsets for each repetition
+        positions = np.tile(self._chunk_positions, count).reshape(count, -1)
+        extent = self._upper_bound - self._lower_bound
         for i_count in range(count):
-            displs[i_count] += i_count * extent
-        return Datatype(type_sigs, displs.ravel().tolist())
+            positions[i_count] += i_count * extent
+
+        # Sizes are simply repeated
+        sizes = np.tile(self._chunk_sizes, count)
+
+        return Datatype(self._numpy_type, positions.ravel(), sizes)
 
     def Create_vector(self, count, blocklength, stride):
         """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_VECTOR"""
+        # Special case
         if count == 0 or blocklength == 0:
-            return Datatype([], [])
+            return Datatype(self._numpy_type, [], [])
 
-        # Type signatures are simply repeated
-        type_sigs = list(self._type_sigatures) * (count * blocklength)
-
-        # Add corresponding displacements for each repetition
-        displs = np.tile(self._displacements, [count, blocklength]).reshape(count, blocklength, -1)
-        [_, extent] = self.Get_extent()
+        # Add corresponding offsets for each repetition
+        positions = np.tile(self._chunk_positions, [count, blocklength]).reshape(count, blocklength, -1)
+        extent = self._upper_bound - self._lower_bound
         for i_count in range(count):
             for i_block in range(blocklength):
-                displs[i_count, i_block] += (i_count * stride + i_block) * extent
-        return Datatype(type_sigs, displs.ravel().tolist())
+                positions[i_count, i_block] += (i_count * stride + i_block) * extent
+
+        # Sizes are simply repeated
+        sizes = np.tile(self._chunk_sizes, count*blocklength)
+
+        return Datatype(self._numpy_type, positions.ravel(), sizes)
 
     def Create_subarray(self, sizes, subsizes, starts, order):
         """Refer to MPI 5.0 Doc 5.1.3 Subarray Datatype Constructor MPI_TYPE_CREATE_SUBARRAY"""
         # check
-        nb_dim = len(sizes)
-        assert len(subsizes) == nb_dim
-        assert len(starts) == nb_dim
+        assert len(subsizes) == len(sizes)
+        assert len(starts) == len(sizes)
         assert order in [ORDER_C, ORDER_F]
 
+        # Special case
         if np.any(subsizes == 0):
-            return Datatype([], [])
-
-        # Type signatures are simply repeated
-        type_sigs = list(self._type_sigatures) * np.multiply.reduce(subsizes)
+            return Datatype(self._numpy_type, [], [])
 
         # More or less a multidimensional version of 'Create_vector', plus some extra offsets due to 'starts'
-        displs = np.tile(self._displacements, subsizes).reshape(*subsizes, -1)
-        [_, extent] = self.Get_extent()
+        positions = np.tile(self._chunk_positions, subsizes).reshape(*subsizes, -1)
+        extent = self._upper_bound - self._lower_bound
         start_offsets = np.asarray(starts)
 
         # Compute strides
@@ -148,18 +175,22 @@ class Datatype(object):
 
         # Add corresponding displacements for each repetition
         for indices in np.ndindex(subsizes):
-            displs[indices] += np.dot(start_offsets + indices, strides) * extent
+            positions[indices] += np.dot(start_offsets + indices, strides) * extent
+
+        # Sizes are simply repeated
+        sizes = np.tile(self._chunk_sizes, np.multiply.reduce(subsizes))
 
         # For subarray, the lb and ub are the begin and end for the whole array
         lb = 0
-        ub = extent * np.multiply.reduce(sizes)
-        return Datatype(type_sigs, displs.ravel().tolist(), lb, ub) 
+        ub = np.multiply.reduce(sizes) * extent
+
+        return Datatype(self._numpy_type, positions.ravel(), sizes, lb, ub) 
 
 
 class BasicDatatype(Datatype):
 
     def __init__(self, name):
-        super().__init__([np.dtype(name)], [0])
+        super().__init__(np.dtype(name), [0], [np.dtype(name).itemsize])
 
     def _end_of_block(self, position):
         return None, None
