@@ -80,8 +80,8 @@ class Datatype(object):
         try:
             # Sort such that chunk positions are monotonically increasing
             [chunk_positions, chunk_sizes] = zip(*sorted(zip(chunk_positions, chunk_sizes)))
-            # Merge chunks if they are connected
-            [chunk_positions, chunk_sizes] = self.merge_connected_chunks(chunk_positions, chunk_sizes)
+            # Merge contiguous chunks for better I/O performance
+            [chunk_positions, chunk_sizes] = self.merge_contiguous_chunks(chunk_positions, chunk_sizes)
         except ValueError:
             # when there is no chunk specified (empty lists)
             pass
@@ -107,53 +107,32 @@ class Datatype(object):
         self._upper_bound = upper_bound
 
     @staticmethod
-    def merge_connected_chunks(positions, sizes):
+    def merge_contiguous_chunks(positions, sizes):
+        """Fully merge contiguous chunks in a vectorized way.
+        Assumes inputs are sorted by (starting) position and non-overlapping.
         """
-        Merge connected chunks: if positions[i] + sizes[i] == positions[i+1], then merge chunk i and i+1.
-
-        Args:
-            positions: starting positions of chunks (sorted)
-            sizes: corresponding sizes (sorted)
-
-        Returns:
-            merged_positions, merged_sizes
-        """
-
-        # Special case
-        if len(positions) == 0:
-            return positions, sizes
-
-        # For saving result
-        merged_positions = []
-        merged_sizes = []
-
-        # Use numpy array
         positions = np.asarray(positions)
         sizes = np.asarray(sizes)
 
-        # Identify positions where merging is needed (True means chunk i and i+1 are connected)
-        is_connected = (positions[:-1] + sizes[:-1] == positions[1:])
+        # Special case
+        if positions.size == 0:
+            return positions, sizes
 
-        # Start with the very first chunk
-        current_position = positions[0]
-        current_size = sizes[0]
+        # Compute end positions
+        ends = positions + sizes
 
-        # Iterate and merge
-        for i in range(len(is_connected)):
-            if is_connected[i]:
-                # Extend the current chunk
-                current_size += sizes[i + 1]
-            else:
-                # Finalize the current chunk and store it
-                merged_positions.append(current_position)
-                merged_sizes.append(current_size)
-                # Switch to next chunk
-                current_position = positions[i + 1]
-                current_size = sizes[i + 1]
+        # Find where continuity breaks: ends[i] != positions[i+1]
+        # This gives a boolean array of length N-1, so mark start of first block as break
+        is_break = np.concatenate(([True], ends[:-1] != positions[1:]))
 
-        # Append the last chunk
-        merged_positions.append(current_position)
-        merged_sizes.append(current_size)
+        # Get indices where new segments start
+        segment_starts = np.where(is_break)[0]
+
+        # (start) Positions of merged chunks are just the original positions at segment starts
+        merged_positions = positions[segment_starts]
+
+        # Sizes of merged chunks are sum of sizes of chunks per segment
+        merged_sizes = np.add.reduceat(sizes, segment_starts)
 
         return merged_positions, merged_sizes
 
