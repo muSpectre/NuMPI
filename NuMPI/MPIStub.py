@@ -122,17 +122,17 @@ class Datatype(object):
         ends = positions + sizes
 
         # Find where continuity breaks: ends[i] != positions[i+1]
-        # This gives a boolean array of length N-1, so mark start of first block as break
+        # This gives a boolean array of length N-1, so mark start of first chunk also as break
         is_break = np.concatenate(([True], ends[:-1] != positions[1:]))
 
-        # Get indices where new segments start
-        segment_starts = np.where(is_break)[0]
+        # Get indices at where continuity breaks
+        idx_breaks = np.where(is_break)[0]
 
-        # (start) Positions of merged chunks are just the original positions at segment starts
-        merged_positions = positions[segment_starts]
+        # New (start) position is the position of the first in merged chunks
+        merged_positions = positions[idx_breaks]
 
-        # Sizes of merged chunks are sum of sizes of chunks per segment
-        merged_sizes = np.add.reduceat(sizes, segment_starts)
+        # New size is the sum of sizes of merged chunks
+        merged_sizes = np.add.reduceat(sizes, idx_breaks)
 
         return merged_positions, merged_sizes
 
