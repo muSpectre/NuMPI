@@ -61,14 +61,18 @@ def cast_mpi_types(
         # For the process that gets zero elements, cast a filetype that eventually doesn't read / write
         file_type = elementary_type.Create_contiguous(0)
     else:
+        # The domain decomposition only happens in spatial dimensions, so only the size of comopnents matters
         components_size = np.multiply.reduce(nb_components)
-        # either fortran order & components leading, or C order & components trailing -> components are contiguous
+        # Either fortran order & components leading, or C order & components trailing -> components are contiguous
         components_are_contiguous = fortran_order ^ (not components_are_leading)
         if components_are_contiguous:
+            # when component dimensions are contiguous, repeat the etype so it treats all components as a whole
             elementary_type = elementary_type.Create_contiguous(components_size)
+        # Each process gets its own share of file according to the domain decomposition
         file_type = elementary_type.Create_subarray(
             nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, MPI.ORDER_F if fortran_order else MPI.ORDER_C)
         if not components_are_contiguous:
+            # when spatial dimensions are contiguous, repeat the share-scheme for each component 
             file_type = file_type.Create_contiguous(components_size)
 
     # Use context to gaurantee that the types will be freed
@@ -138,7 +142,7 @@ class NPYFile(MPIFileView):
                 self.file.Close()
             raise err
 
-    def read(self, subdomain_locations=None, nb_subdomain_grid_pts=None, nb_components=1, components_are_leading=True):
+    def read(self, subdomain_locations=None, nb_subdomain_grid_pts=None, nb_components=(), components_are_leading=True):
         nb_dims = len(self.nb_grid_pts)
         if subdomain_locations is None:
             subdomain_locations = (0,) * nb_dims
@@ -146,7 +150,8 @@ class NPYFile(MPIFileView):
             nb_subdomain_grid_pts = self.nb_grid_pts
 
         data = np.empty(nb_subdomain_grid_pts, dtype=self.dtype, order='F' if self.fortran_order else 'C')
-        with cast_mpi_types(data.dtype, self.nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, self.fortran_order, components_are_leading) as [etype, filetype]:
+        with cast_mpi_types(data.dtype, self.nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, 
+                            self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
             self.file.Read_all(data)
         return data
@@ -188,7 +193,9 @@ def mpi_read_bytes(file, nbytes):
     return buf.tobytes()
 
 
-def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=1, components_are_leading=True):
+def save_npy(
+        fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=(),
+        components_are_leading=True):
     """
 
     Parameters
@@ -262,7 +269,8 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
         file.Write(arr_dict_str.encode("latin-1"))
 
     # Write data
-    with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, fortran_order, components_are_leading) as [etype, filetype]:
+    with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations,
+                        nb_components, fortran_order, components_are_leading) as [etype, filetype]:
         file.Set_view(header_length, etype, filetype)
         file.Write_all(data)
 
@@ -271,8 +279,8 @@ def save_npy(fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM
 
 
 def load_npy(
-    fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=1, components_are_leading=True
-):
+        fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=(),
+        components_are_leading=True):
     file = NPYFile(fn, comm)
     data = file.read(subdomain_locations, nb_subdomain_grid_pts, nb_components, components_are_leading)
     file.close()
