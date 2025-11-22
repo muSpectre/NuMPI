@@ -106,6 +106,20 @@ class Datatype(object):
                 upper_bound = 0
         self._upper_bound = upper_bound
 
+    @property
+    def element_size(self):
+        """Size of element in byte units."""
+        return self._numpy_type.itemsize
+
+    @property
+    def type_size(self):
+        """Extent of the type in byte units."""
+        return (self._upper_bound - self._lower_bound) * self._numpy_type.itemsize
+
+    def iterate_chunks(self):
+        """Iterate (position, size) of chunks."""
+        return zip(self._chunk_positions, self._chunk_sizes)
+
     @staticmethod
     def merge_contiguous_chunks(positions, sizes):
         """Fully merge contiguous chunks in a vectorized way.
@@ -179,7 +193,7 @@ class Datatype(object):
                 positions[i_count, i_block] += (i_count * stride + i_block) * extent
 
         # Sizes are simply repeated
-        sizes = np.tile(self._chunk_sizes, count*blocklength)
+        sizes = np.tile(self._chunk_sizes, count * blocklength)
 
         return Datatype(self._numpy_type, positions.ravel(), sizes)
 
@@ -222,7 +236,7 @@ class Datatype(object):
 class BasicDatatype(Datatype):
 
     def __init__(self, name):
-        super().__init__(np.dtype(name), [0], [np.dtype(name).itemsize])
+        super().__init__(np.dtype(name), [0], [1])
 
     def _end_of_block(self, position):
         return None, None
@@ -234,6 +248,7 @@ class Typedict(object):
 
 
 _typedict = Typedict()
+BYTE = _typedict["i1"]
 
 
 # ## Operations
@@ -403,40 +418,62 @@ class File(object):
                 self._file = filename.buffer
             else:
                 self._file = filename
-        self._disp = 0
-        self._etype = _typedict["i1"]
-        self._filetype = None
+        self.Set_view()
 
     def Close(self):
         self._file.close()
 
     def Get_position(self):
-        return self._file.tell() - self._disp
+        """Return the current position of the individual file pointer.
+        Note: Position is measured in etype units relative to the current file view.
+        """
+        return (self._file.tell() - self._view_start) // self._etype.type_size
 
     def Read(self, buf):
-        # FIXME: it doesn't really use the etype and filetype
         try:
-            data = self._file.read(buf.size * buf.itemsize)
-            buf[...] = np.frombuffer(
-                data, count=buf.size, dtype=buf.dtype).reshape(
-                buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
+            if self._filetype is None:
+                self._file.seek(self._view_start)
+                # read until the buffer is full
+                nb_bytes = buf.size * buf.itemsize
+                data = self._file.read(nb_bytes)
+                buf[...] = np.frombuffer(data, dtype=buf.dtype, count=buf.size).reshape(
+                    buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
+            else:
+                element_size = self._filetype.element_size
+                data = bytearray()
+                for position, size in self._filetype.iterate_chunks():
+                    self._file.seek(self._view_start + position * element_size)
+                    data += self._file.read(size * element_size)
+                    buf[...] = np.frombuffer(
+                        data, dtype=buf.dtype, count=buf.size).reshape(
+                        buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
+            self._view_start = self._file.tell()
         except Exception:
             if not self.already_open:
                 self.close()
 
     Read_all = Read
 
-    def Set_view(self, disp, etype=None, filetype=None):
-        self._file.seek(disp)
-        self._disp = disp
+    def Set_view(self, disp=0, etype=BYTE, filetype=None):
+        self._view_start = disp
         self._etype = etype
         self._filetype = filetype
 
     def Write(self, buf):
-        # FIXME: it doesn't really use the etype and filetype
         if isinstance(buf, np.ndarray):
             buf = buf.tobytes(order='F' if not buf.flags.c_contiguous else 'C')
-        self._file.write(buf)
+        if self._filetype is None:
+            self._file.seek(self._view_start)
+            self._file.write(buf)
+        else:
+            element_size = self._filetype.element_size
+            i_byte = 0
+            for position, size in self._filetype.iterate_chunks():
+                self._file.seek(self._view_start + position * element_size)
+                nb_bytes = size * element_size
+                self._file.write(buf[i_byte : i_byte + nb_bytes])
+                i_byte += nb_bytes
+        self._view_start = self._file.tell()
 
     Write_all = Write
 
