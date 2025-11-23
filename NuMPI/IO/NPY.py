@@ -44,7 +44,7 @@ except ImportError:
 
 from .. import MPI
 from ..Tools import Reduction
-from .common import MPIFileTypeError, MPIFileView
+from .common import MPIFileTypeError, MPIFileView, decompose_shape, recover_shape
 
 
 @contextlib.contextmanager
@@ -83,27 +83,6 @@ def cast_mpi_types(
     finally:
         elementary_type.free()
         file_type.free()
-
-
-def decompose_shape(array_shape: Sequence[int], spatial_ndim: int, components_are_leading: bool):
-    # Special case when all dimensions are spatial shape
-    if spatial_ndim == len(array_shape):
-        return array_shape, ()
-
-    if components_are_leading:
-        spatial_shape = array_shape[-spatial_ndim:]
-        component_shape = array_shape[:-spatial_ndim]
-    else:
-        spatial_shape = array_shape[:spatial_ndim]
-        component_shape = array_shape[spatial_ndim:]
-    return spatial_shape, component_shape
-
-
-def recover_shape(spatial_shape: Sequence[int], component_shape: Sequence[int], components_are_leading: bool):
-    if components_are_leading:
-        return *component_shape, *spatial_shape
-    else:
-        return *spatial_shape, *component_shape
 
 
 class NPYFile(MPIFileView):
