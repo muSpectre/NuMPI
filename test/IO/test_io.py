@@ -113,6 +113,68 @@ def test_filesave_2d(decompfun, comm, globaldata2d):
         os.remove("test_filesave_2d.npy")
 
 
+# @pytest.mark.parametrize("decompfun", [make_2d_slab_x, make_2d_slab_y])
+# def test_filesave_multicomponent(decompfun, comm, multicomponent_globaldata):
+#     """Test saving and loading multicomponent arrays"""
+#     globaldata, nb_grid_pts, nb_components, components_are_leading = multicomponent_globaldata
+
+#     spatial_ndim = len(globaldata.shape) - len(nb_components)
+
+#     # Extract spatial shape
+#     if components_are_leading:
+#         spatial_shape = globaldata.shape[-spatial_ndim:]
+#     else:
+#         spatial_shape = globaldata.shape[:spatial_ndim]
+
+#     # Only use 2D decomposition for 2D spatial data
+#     if spatial_ndim != 2:
+#         pytest.skip("Decomposition function is only for 2D spatial grids")
+
+#     # Create a view that only looks at the first component for decomposition
+#     if components_are_leading:
+#         first_component_index = tuple([0] * len(nb_components))
+#         first_component_data = globaldata[first_component_index]
+#     else:
+#         # For trailing components, we need Ellipsis followed by all component indices
+#         first_component_index = (Ellipsis,) + tuple([0] * len(nb_components))
+#         first_component_data = globaldata[first_component_index]
+
+#     distdata = decompfun(comm, first_component_data)
+
+#     # Now build the local data with components
+#     if components_are_leading:
+#         local_shape = nb_components + distdata.nb_subdomain_grid_pts
+#         local_slices = (slice(None),) * len(nb_components) + tuple(
+#             slice(loc, loc + size)
+#             for loc, size in zip(distdata.subdomain_locations, distdata.nb_subdomain_grid_pts)
+#         )
+#     else:
+#         local_shape = distdata.nb_subdomain_grid_pts + nb_components
+#         local_slices = tuple(
+#             slice(loc, loc + size)
+#             for loc, size in zip(distdata.subdomain_locations, distdata.nb_subdomain_grid_pts)
+#         ) + (slice(None),) * len(nb_components)
+
+#     localdata = globaldata[local_slices]
+
+#     fn = f"test_filesave_multicomp_{comm.size}.npy"
+#     save_npy(
+#         fn,
+#         localdata,
+#         distdata.subdomain_locations,
+#         distdata.nb_domain_grid_pts,
+#         components_are_leading=components_are_leading,
+#         comm=comm,
+#     )
+#     comm.barrier()
+#     loaded_data = np.load(fn)
+#     assert_one_array_equal(comm, 0, loaded_data, globaldata)
+
+#     comm.barrier()
+#     if comm.rank == 0:
+#         os.remove(fn)
+
+
 @pytest.mark.parametrize("decompfun", [make_2d_slab_x, make_2d_slab_y])
 def test_fileview_2d(decompfun, comm, globaldata2d):
     distdata = decompfun(comm, globaldata2d)
@@ -297,3 +359,70 @@ def test_parallel_load(comm, datagrid):
     comm.barrier()
     if comm.rank == 0:
         os.remove("test.npy")
+
+
+def test_parallel_save_multicomponent(comm, multicomponent_globaldata):
+    """Test parallel save of multicomponent arrays"""
+    globaldata, _, nb_components, components_are_leading  = multicomponent_globaldata
+
+    distdata = subdivide(comm, globaldata, nb_components, components_are_leading)
+
+    order = "F" if Reduction(comm).any(globaldata.flags.f_contiguous) else "C"
+    fn = f"test_parallel_save_multicomp_{comm.size}_{order}_{'lead' if components_are_leading else 'trail'}.npy"
+
+    save_npy(
+        fn,
+        distdata.data,
+        subdomain_locations=distdata.subdomain_locations,
+        nb_grid_pts=distdata.nb_domain_grid_pts,
+        components_are_leading=components_are_leading,
+        comm=comm,
+    )
+
+    comm.barrier()
+    loaded_data = np.load(fn)
+    assert_one_array_equal(comm, 0, loaded_data, globaldata)
+
+    comm.barrier()
+    if comm.rank == 0:
+        os.remove(fn)
+
+
+def test_parallel_load_multicomponent(comm, multicomponent_globaldata):
+    """Test parallel load of multicomponent arrays"""
+    globaldata, _, nb_components, components_are_leading = multicomponent_globaldata
+
+    distdata = subdivide(comm, globaldata, nb_components, components_are_leading)
+
+    order = "F" if Reduction(comm).any(globaldata.flags.f_contiguous) else "C"
+    fn = f"test_parallel_load_multicomp_{comm.size}_{order}_{'lead' if components_are_leading else 'trail'}.npy"
+
+    if comm.rank == 0:
+        np.save(fn, globaldata)
+
+    comm.barrier()
+    loaded_data = load_npy(
+        fn,
+        subdomain_locations=distdata.subdomain_locations,
+        nb_subdomain_grid_pts=distdata.nb_subdomain_grid_pts,
+        components_are_leading=components_are_leading,
+        comm=comm,
+    )
+
+    # Build expected local data with components
+    spatial_slices = tuple(
+        slice(loc, loc + size)
+        for loc, size in zip(distdata.subdomain_locations, distdata.nb_subdomain_grid_pts)
+    )
+    component_slices = (slice(None),) * len(nb_components)
+    if components_are_leading:
+        local_slices = component_slices + spatial_slices
+    else:
+        local_slices = spatial_slices + component_slices
+    expected_local_data = globaldata[local_slices]
+
+    assert_all_array_equal(comm, loaded_data, expected_local_data)
+
+    comm.barrier()
+    if comm.rank == 0:
+        os.remove(fn)
