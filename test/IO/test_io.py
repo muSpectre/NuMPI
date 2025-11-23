@@ -67,7 +67,7 @@ def test_filesave_1D(comm):
         localdata,
         (subdomain_locations,),
         (nb_domain_grid_pts,),
-        comm,
+        comm=comm,
     )
     comm.barrier()  # The MPI_File reading and closing doesn't have to
     # finish together
@@ -102,7 +102,7 @@ def test_filesave_2d(decompfun, comm, globaldata2d):
         distdata.data,
         distdata.subdomain_locations,
         distdata.nb_domain_grid_pts,
-        comm,
+        comm=comm,
     )
     comm.barrier()
     loaded_data = np.load("test_filesave_2d.npy")
