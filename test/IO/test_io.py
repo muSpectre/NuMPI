@@ -119,7 +119,7 @@ def test_fileview_2d(decompfun, comm, globaldata2d):
 
     file = NPYFile("test_fileload_2d.npy", comm=comm)
 
-    assert file.nb_grid_pts == distdata.nb_domain_grid_pts
+    assert file.array_shape == distdata.nb_domain_grid_pts
     assert file.dtype == globaldata2d.dtype
 
     loaded_data = file.read(
