@@ -85,6 +85,20 @@ def cast_mpi_types(
         file_type.free()
 
 
+def infer_shapes(array_shape: Sequence[int], spatial_ndim: int, components_are_leading: bool = True):
+    # Special case when all dimensions are spatial shape
+    if spatial_ndim == len(array_shape):
+        return array_shape, ()
+
+    if components_are_leading:
+        spatial_shape = array_shape[-spatial_ndim:]
+        component_shape = array_shape[:-spatial_ndim]
+    else:
+        spatial_shape = array_shape[:spatial_ndim]
+        component_shape = array_shape[spatial_ndim:]
+    return spatial_shape, component_shape
+
+
 class NPYFile(MPIFileView):
     """
     You may have a look at numpy.lib.format if you want to understand how
@@ -132,7 +146,7 @@ class NPYFile(MPIFileView):
             self.dtype = np.dtype(d["descr"])
             self.fortran_order = d["fortran_order"]
             # TODO: it needs to judge nb_components
-            self.nb_grid_pts = d["shape"]
+            self.array_shape = d["shape"]
             self.data_start = self.file.Get_position()
 
             self.header_length += len(magic_str) + struct.calcsize(hlength_type)
@@ -142,15 +156,36 @@ class NPYFile(MPIFileView):
                 self.file.Close()
             raise err
 
-    def read(self, subdomain_locations=None, nb_subdomain_grid_pts=None, nb_components=(), components_are_leading=True):
-        nb_dims = len(self.nb_grid_pts)
+    def read(
+            self, subdomain_locations: Union[Sequence[int], None] = None,
+            nb_subdomain_grid_pts: Union[Sequence[int], None] = None,
+            components_are_leading=True):
+        # Figure out how many dimensions are spatial
+        try:
+            spatial_ndim = len(subdomain_locations)
+        except TypeError:
+            try: 
+                spatial_ndim = len(nb_subdomain_grid_pts)
+            except TypeError:
+                # take all the dimensions as spatial
+                spatial_ndim = len(self.array_shape)
+        # Get two part of shapes from the total shape
+        nb_grid_pts, nb_components = infer_shapes(self.array_shape, spatial_ndim, components_are_leading)
+
+        # If not specified, starting at the origin
         if subdomain_locations is None:
-            subdomain_locations = (0,) * nb_dims
+            subdomain_locations = (0,) * spatial_ndim
+        # Check value compatibility
+        assert len(subdomain_locations) == spatial_ndim
+
+        # If not specified, take the whole grid
         if nb_subdomain_grid_pts is None:
-            nb_subdomain_grid_pts = self.nb_grid_pts
+            nb_subdomain_grid_pts = nb_grid_pts
+        # Check value compatibility
+        assert len(nb_subdomain_grid_pts) == spatial_ndim
 
         data = np.empty(nb_subdomain_grid_pts, dtype=self.dtype, order='F' if self.fortran_order else 'C')
-        with cast_mpi_types(data.dtype, self.nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, 
+        with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, 
                             self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
             self.file.Read_all(data)
@@ -194,8 +229,9 @@ def mpi_read_bytes(file, nbytes):
 
 
 def save_npy(
-        fn, data, subdomain_locations=None, nb_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=(),
-        components_are_leading=True):
+        fn, data, subdomain_locations: Union[Sequence[int], None] = None,
+        nb_grid_pts: Union[Sequence[int], None] = None,
+        components_are_leading=True, comm=MPI.COMM_WORLD):
     """
 
     Parameters
@@ -215,20 +251,29 @@ def save_npy(
     if not data.flags.f_contiguous and not data.flags.c_contiguous:
         raise ValueError("Data must be contiguous")
 
-    # Idiot check: Dimensions of the buffers
-    nb_dims = len(data.shape)
-    assert (
-        len(nb_grid_pts) == nb_dims
-    ), "`nb_grid_pts` must have the same number of dimensions as the data`"
+    # Figure out how many dimensions are spatial
+    try:
+        spatial_ndim = len(subdomain_locations)
+    except TypeError:
+        try: 
+            spatial_ndim = len(nb_grid_pts)
+        except TypeError:
+            # take all the dimensions as spatial
+            spatial_ndim = len(data.shape)
+    # Get two type of shapes from buffer shape
+    nb_subdomain_grid_pts, nb_components = infer_shapes(data.shape, spatial_ndim, components_are_leading)
 
-    # If subdomain locations are missing, we assume the buffer sits at the origin
+    # If not specified, starting at the origin
     if subdomain_locations is None:
-        subdomain_locations = (0,) * nb_dims
-    else:
-        assert (
-            len(subdomain_locations) == nb_dims
-        ), "`subdomain_locations` must have the same number of dimensions as the data`"
-    nb_subdomain_grid_pts = data.shape
+        subdomain_locations = (0,) * spatial_ndim
+    # Check value compatibility
+    assert len(subdomain_locations) == spatial_ndim
+
+    # If not specified, what provided is whole grid
+    if nb_grid_pts is None:
+        nb_grid_pts = nb_subdomain_grid_pts
+    # Check value compatibility
+    assert len(nb_grid_pts) == spatial_ndim
 
     from numpy.lib.format import dtype_to_descr, magic
 
@@ -279,9 +324,10 @@ def save_npy(
 
 
 def load_npy(
-        fn, subdomain_locations=None, nb_subdomain_grid_pts=None, comm=MPI.COMM_WORLD, nb_components=(),
-        components_are_leading=True):
+        fn, subdomain_locations: Union[Sequence[int], None] = None, 
+        nb_subdomain_grid_pts: Union[Sequence[int], None] = None,
+        components_are_leading=True, comm=MPI.COMM_WORLD):
     file = NPYFile(fn, comm)
-    data = file.read(subdomain_locations, nb_subdomain_grid_pts, nb_components, components_are_leading)
+    data = file.read(subdomain_locations, nb_subdomain_grid_pts, components_are_leading)
     file.close()
     return data
