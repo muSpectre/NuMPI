@@ -107,12 +107,12 @@ class Datatype(object):
         self._upper_bound = upper_bound
 
     @property
-    def element_size(self):
+    def element_bytesize(self):
         """Size of element in byte units."""
         return self._numpy_type.itemsize
 
     @property
-    def type_size(self):
+    def bytesize(self):
         """Extent of the type in byte units."""
         return (self._upper_bound - self._lower_bound) * self._numpy_type.itemsize
 
@@ -427,7 +427,7 @@ class File(object):
         """Return the current position of the individual file pointer.
         Note: Position is measured in etype units relative to the current file view.
         """
-        return (self._file.tell() - self._view_start) // self._etype.type_size
+        return (self._file.tell() - self._view_start) // self._etype.bytesize
 
     def Read(self, buf):
         try:
@@ -437,11 +437,11 @@ class File(object):
                 nb_bytes = buf.size * buf.itemsize
                 data = self._file.read(nb_bytes)
             else:
-                element_size = self._filetype.element_size
+                e_size = self._filetype.element_bytesize
                 data = bytearray()
                 for position, size in self._filetype.iterate_chunks():
-                    self._file.seek(self._view_start + position * element_size)
-                    data += self._file.read(size * element_size)
+                    self._file.seek(self._view_start + position * e_size)
+                    data += self._file.read(size * e_size)
             buf[...] = np.frombuffer(data, dtype=buf.dtype, count=buf.size).reshape(
                 buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
             self._view_start = self._file.tell()
@@ -463,11 +463,11 @@ class File(object):
             self._file.seek(self._view_start)
             self._file.write(buf)
         else:
-            element_size = self._filetype.element_size
+            e_size = self._filetype.element_bytesize
             i_byte = 0
             for position, size in self._filetype.iterate_chunks():
-                self._file.seek(self._view_start + position * element_size)
-                nb_bytes = size * element_size
+                self._file.seek(self._view_start + position * e_size)
+                nb_bytes = size * e_size
                 self._file.write(buf[i_byte : i_byte + nb_bytes])
                 i_byte += nb_bytes
         self._view_start = self._file.tell()
