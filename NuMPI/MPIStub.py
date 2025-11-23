@@ -436,17 +436,14 @@ class File(object):
                 # read until the buffer is full
                 nb_bytes = buf.size * buf.itemsize
                 data = self._file.read(nb_bytes)
-                buf[...] = np.frombuffer(data, dtype=buf.dtype, count=buf.size).reshape(
-                    buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
             else:
                 element_size = self._filetype.element_size
                 data = bytearray()
                 for position, size in self._filetype.iterate_chunks():
                     self._file.seek(self._view_start + position * element_size)
                     data += self._file.read(size * element_size)
-                    buf[...] = np.frombuffer(
-                        data, dtype=buf.dtype, count=buf.size).reshape(
-                        buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
+            buf[...] = np.frombuffer(data, dtype=buf.dtype, count=buf.size).reshape(
+                buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
             self._view_start = self._file.tell()
         except Exception:
             if not self.already_open:
