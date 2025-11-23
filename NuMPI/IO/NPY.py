@@ -85,7 +85,7 @@ def cast_mpi_types(
         file_type.free()
 
 
-def infer_shapes(array_shape: Sequence[int], spatial_ndim: int, components_are_leading: bool = True):
+def decompose_shape(array_shape: Sequence[int], spatial_ndim: int, components_are_leading: bool):
     # Special case when all dimensions are spatial shape
     if spatial_ndim == len(array_shape):
         return array_shape, ()
@@ -97,6 +97,13 @@ def infer_shapes(array_shape: Sequence[int], spatial_ndim: int, components_are_l
         spatial_shape = array_shape[:spatial_ndim]
         component_shape = array_shape[spatial_ndim:]
     return spatial_shape, component_shape
+
+
+def recover_shape(spatial_shape: Sequence[int], component_shape: Sequence[int], components_are_leading: bool):
+    if components_are_leading:
+        return *component_shape, *spatial_shape
+    else:
+        return *spatial_shape, *component_shape
 
 
 class NPYFile(MPIFileView):
@@ -145,7 +152,6 @@ class NPYFile(MPIFileView):
             # assertions
             self.dtype = np.dtype(d["descr"])
             self.fortran_order = d["fortran_order"]
-            # TODO: it needs to judge nb_components
             self.array_shape = d["shape"]
             self.data_start = self.file.Get_position()
 
@@ -170,7 +176,7 @@ class NPYFile(MPIFileView):
                 # take all the dimensions as spatial
                 spatial_ndim = len(self.array_shape)
         # Get two part of shapes from the total shape
-        nb_grid_pts, nb_components = infer_shapes(self.array_shape, spatial_ndim, components_are_leading)
+        nb_grid_pts, nb_components = decompose_shape(self.array_shape, spatial_ndim, components_are_leading)
 
         # If not specified, starting at the origin
         if subdomain_locations is None:
@@ -184,7 +190,8 @@ class NPYFile(MPIFileView):
         # Check value compatibility
         assert len(nb_subdomain_grid_pts) == spatial_ndim
 
-        data = np.empty(nb_subdomain_grid_pts, dtype=self.dtype, order='F' if self.fortran_order else 'C')
+        buf_shape = recover_shape(nb_subdomain_grid_pts, nb_components, components_are_leading)
+        data = np.empty(buf_shape, dtype=self.dtype, order='F' if self.fortran_order else 'C')
         with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, 
                             self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
@@ -261,7 +268,7 @@ def save_npy(
             # take all the dimensions as spatial
             spatial_ndim = len(data.shape)
     # Get two type of shapes from buffer shape
-    nb_subdomain_grid_pts, nb_components = infer_shapes(data.shape, spatial_ndim, components_are_leading)
+    nb_subdomain_grid_pts, nb_components = decompose_shape(data.shape, spatial_ndim, components_are_leading)
 
     # If not specified, starting at the origin
     if subdomain_locations is None:
@@ -290,13 +297,12 @@ def save_npy(
         Reduction(comm).any(data.flags.f_contiguous and not data.flags.c_contiguous)
     )
 
-    # TODO: change shape according to nb_components
     # This is the NPY file header - a stringified dict
     arr_dict_str = str(
         {
             "descr": dtype_to_descr(data.dtype),
             "fortran_order": fortran_order,
-            "shape": tuple(nb_grid_pts),
+            "shape": recover_shape(nb_grid_pts, nb_components, components_are_leading),
         }
     )
 
