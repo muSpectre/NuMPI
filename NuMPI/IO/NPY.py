@@ -61,8 +61,8 @@ def cast_mpi_types(
         # For the process that gets zero elements, cast a filetype that eventually doesn't read / write
         file_type = elementary_type.Create_contiguous(0)
     else:
-        # The domain decomposition only happens in spatial dimensions, so only the size of comopnents matters
-        components_size = np.multiply.reduce(nb_components)
+        # The domain decomposition only happens in spatial dimensions, so only the total size matters
+        components_size = np.multiply.reduce(nb_components, dtype=int)
         # Either fortran order & components leading, or C order & components trailing -> components are contiguous
         components_are_contiguous = fortran_order ^ (not components_are_leading)
         if components_are_contiguous:
@@ -72,10 +72,10 @@ def cast_mpi_types(
         file_type = elementary_type.Create_subarray(
             nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, MPI.ORDER_F if fortran_order else MPI.ORDER_C)
         if not components_are_contiguous:
-            # when spatial dimensions are contiguous, repeat the share-scheme for each component 
+            # when spatial dimensions are contiguous, repeat the share-scheme for each component
             file_type = file_type.Create_contiguous(components_size)
 
-    # Use context to gaurantee that the types will be freed
+    # Use context to guarantee that the types will be freed
     elementary_type.Commit()
     file_type.Commit()
     try:
