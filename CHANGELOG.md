@@ -6,6 +6,7 @@ v0.8.3 (14Nov25)
 
 - BUG: Fixing comm.Allreduce in `save_npy`
 - MAINT: Add *kwargs to `save_npy`
+- ENH: Support field array with multicomponent quantities.
 
 v0.8.2 (27Jun25)
 ----------------

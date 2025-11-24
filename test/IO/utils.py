@@ -43,6 +43,10 @@ def subdivide(comm, globaldata, nb_components=(), components_are_leading=True):
         The MPI communicator.
     globaldata : numpy.ndarray
         The global data array to be decomposed.
+    nb_components: tuple[int,...]
+        Shape of components.
+    components_are_leading: bool
+        If True, full shape is (*nb_components, *spaital_shape); else, (*spatial_shape, *nb_components)
 
     Returns
     -------
@@ -77,7 +81,7 @@ def subdivide(comm, globaldata, nb_components=(), components_are_leading=True):
     )
 
 
-def make_2d_slab_x(comm, globaldata):
+def make_slab_x(comm, globaldata, nb_components=(), components_are_leading=True):
     """
     Returns the part of globaldata attribute to the present rank in 2D data
     decomposition.
@@ -88,6 +92,10 @@ def make_2d_slab_x(comm, globaldata):
         The MPI communicator.
     globaldata : numpy.ndarray
         The global data array to be decomposed.
+    nb_components: tuple[int,...]
+        Shape of components.
+    components_are_leading: bool
+        If True, full shape is (*nb_components, *spaital_shape); else, (*spatial_shape, *nb_components)
 
     Returns
     -------
@@ -97,41 +105,51 @@ def make_2d_slab_x(comm, globaldata):
     nprocs = comm.Get_size()
     rank = comm.Get_rank()
 
-    nb_domain_grid_pts = globaldata.shape
+    nb_domain_grid_pts = decompose_shape(
+        globaldata.shape, len(globaldata.shape) - len(nb_components),
+        components_are_leading)[0]
 
     step = nb_domain_grid_pts[0] // nprocs
 
+    spatial_slices = [slice(None)] * len(nb_domain_grid_pts)
     if rank == nprocs - 1:
-        subdomain_slices = (slice(rank * step, None), slice(None, None))
-        subdomain_locations = [rank * step, 0]
-        # nb_subdomain_grid_pts = [nb_domain_grid_pts[0] - rank * step,
-        #                          nb_domain_grid_pts[1]]
+        spatial_slices[0] = slice(rank * step, None)
     else:
-        subdomain_slices = (slice(rank * step, (rank + 1) * step), slice(None, None))
-        subdomain_locations = [rank * step, 0]
-        # nb_subdomain_grid_pts = [step, nb_domain_grid_pts[1]]
+        spatial_slices[0] = slice(rank * step, (rank + 1) * step)
+    component_slices = (slice(None),) * len(nb_components)
+    subdomain_slices = recover_shape(tuple(spatial_slices), component_slices, components_are_leading)
+
+    subdomain_locations = [0] * len(nb_domain_grid_pts)
+    subdomain_locations[0] = rank * step
 
     return DistributedData(
         globaldata[subdomain_slices].copy(), nb_domain_grid_pts, subdomain_locations
     )
 
 
-def make_2d_slab_y(comm, globaldata):
+def make_slab_y(comm, globaldata, nb_components=(), components_are_leading=True):
     nprocs = comm.Get_size()
     rank = comm.Get_rank()
 
-    nb_domain_grid_pts = globaldata.shape
+    nb_domain_grid_pts = decompose_shape(
+        globaldata.shape, len(globaldata.shape) - len(nb_components),
+        components_are_leading)[0]
+
+    if len(nb_domain_grid_pts) < 1:
+        raise ValueError("The domain must be at least 2D to have a y-axis.")
 
     step = nb_domain_grid_pts[1] // nprocs
+
+    spatial_slices = [slice(None)] * len(nb_domain_grid_pts)
     if rank == nprocs - 1:
-        subdomain_slices = (slice(None, None), slice(rank * step, None))
-        subdomain_locations = [0, rank * step]
-        # nb_subdomain_grid_pts = [nb_domain_grid_pts[0],
-        #                          nb_domain_grid_pts[1] - rank * step]
+        spatial_slices[1] = slice(rank * step, None)
     else:
-        subdomain_slices = (slice(None, None), slice(rank * step, (rank + 1) * step))
-        subdomain_locations = [0, rank * step]
-        # nb_subdomain_grid_pts = [nb_domain_grid_pts[1], step]
+        spatial_slices[1] = slice(rank * step, (rank + 1) * step)
+    component_slices = (slice(None),) * len(nb_components)
+    subdomain_slices = recover_shape(tuple(spatial_slices), component_slices, components_are_leading)
+
+    subdomain_locations = [0] * len(nb_domain_grid_pts)
+    subdomain_locations[1] = rank * step
 
     return DistributedData(
         globaldata[subdomain_slices].copy(), nb_domain_grid_pts, subdomain_locations
