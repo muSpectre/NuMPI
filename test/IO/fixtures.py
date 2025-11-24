@@ -3,6 +3,8 @@ import os
 import numpy as np
 import pytest
 
+from NuMPI.IO.common import recover_shape
+
 
 @pytest.fixture
 def npyfile():
@@ -98,3 +100,60 @@ def datagrid(request, comm):
         assert data.flags.f_contiguous
 
     return data
+
+
+@pytest.fixture(
+    params=[
+        # 2D grid
+        ("C", (16, 16), (3,), True),
+        ("F", (16, 16), (3,), True),
+        ("C", (16, 16), (3,), False),
+        ("F", (16, 16), (3,), False),
+        ("C", (16, 16), (2, 2), True),
+        ("F", (16, 16), (2, 2), True),
+        ("C", (16, 16), (2, 2), False),
+        ("F", (16, 16), (2, 2), False),
+        # 3D grid
+        ("C", (8, 8, 8), (3,), True),
+        ("F", (8, 8, 8), (3,), True),
+        ("C", (8, 8, 8), (3,), False),
+        ("F", (8, 8, 8), (3,), False),
+        ("C", (8, 8, 8), (2, 2), True),
+        ("F", (8, 8, 8), (2, 2), True),
+        ("C", (8, 8, 8), (2, 2), False),
+        ("F", (8, 8, 8), (2, 2), False),
+        # Edge cases when some process may have no elements
+        ("C", (3, 2), (), True),
+        ("C", (3, 2), (), False),
+    ]
+)
+def multicomponent_globaldata(request, comm):
+    """
+    Fixture for multicomponent data (2D and 3D).
+    Returns a tuple of (data, nb_components, components_are_leading)
+    """
+    order, nb_grid_pts, nb_components, components_are_leading = request.param
+
+    full_shape = recover_shape(nb_grid_pts, nb_components, components_are_leading)
+
+    np.random.seed(2)
+    if order == "C":
+        data = np.random.random(full_shape)
+        assert data.flags["C_CONTIGUOUS"]
+    elif order == "F":
+        data = np.random.random(full_shape[::-1]).transpose()
+        assert data.flags["F_CONTIGUOUS"]
+
+    rank = comm.Get_rank()
+
+    spatial_ndim = len(nb_grid_pts)
+    filename = f"test_multicomp_{spatial_ndim}d_{order}_{'leading' if components_are_leading else 'trailing'}.npy"
+    if rank == 0:
+        np.save(filename, data)
+
+    comm.barrier()
+    yield data, nb_grid_pts, nb_components, components_are_leading
+
+    comm.barrier()
+    if rank == 0:
+        os.remove(filename)
