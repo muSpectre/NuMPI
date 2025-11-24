@@ -149,7 +149,7 @@ class NPYFile(MPIFileView):
         try:
             spatial_ndim = len(subdomain_locations)
         except TypeError:
-            try: 
+            try:
                 spatial_ndim = len(nb_subdomain_grid_pts)
             except TypeError:
                 # take all the dimensions as spatial
@@ -171,7 +171,7 @@ class NPYFile(MPIFileView):
 
         buf_shape = recover_shape(nb_subdomain_grid_pts, nb_components, components_are_leading)
         data = np.empty(buf_shape, dtype=self.dtype, order='F' if self.fortran_order else 'C')
-        with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components, 
+        with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components,
                             self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
             self.file.Read_all(data)
@@ -241,7 +241,7 @@ def save_npy(
     try:
         spatial_ndim = len(subdomain_locations)
     except TypeError:
-        try: 
+        try:
             spatial_ndim = len(nb_grid_pts)
         except TypeError:
             # take all the dimensions as spatial
@@ -309,7 +309,7 @@ def save_npy(
 
 
 def load_npy(
-        fn, subdomain_locations: Union[Sequence[int], None] = None, 
+        fn, subdomain_locations: Union[Sequence[int], None] = None,
         nb_subdomain_grid_pts: Union[Sequence[int], None] = None,
         components_are_leading=True, comm=MPI.COMM_WORLD):
     file = NPYFile(fn, comm)

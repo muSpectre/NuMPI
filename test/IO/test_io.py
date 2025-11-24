@@ -363,7 +363,7 @@ def test_parallel_load(comm, datagrid):
 
 def test_parallel_save_multicomponent(comm, multicomponent_globaldata):
     """Test parallel save of multicomponent arrays"""
-    globaldata, _, nb_components, components_are_leading  = multicomponent_globaldata
+    globaldata, _, nb_components, components_are_leading = multicomponent_globaldata
 
     distdata = subdivide(comm, globaldata, nb_components, components_are_leading)
 

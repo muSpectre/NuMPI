@@ -54,10 +54,10 @@ ORDER_F = Layout.ORDER_F
 
 class Datatype(object):
     """
-    Because the datatype in Stub is solely for File I/O purpose, the class assumes the datatype is always 
+    Because the datatype in Stub is solely for File I/O purpose, the class assumes the datatype is always
     some sections (chunks) of a numpy array.
     """
-    
+
     _numpy_type: np.dtype
     """Base element"""
     _chunk_positions: Sequence[int]
@@ -479,7 +479,7 @@ class File(object):
             for position, size in self._filetype.iterate_chunks():
                 self._file.seek(self._view_start + position * e_size)
                 nb_bytes = size * e_size
-                self._file.write(buf[i_byte : i_byte + nb_bytes])
+                self._file.write(buf[i_byte: i_byte + nb_bytes])
                 i_byte += nb_bytes
         self._view_start = self._file.tell()
 
