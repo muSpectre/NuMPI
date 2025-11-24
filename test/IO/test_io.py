@@ -26,7 +26,7 @@
 import functools
 import os
 import warnings
-from test.IO.utils import make_2d_slab_x, make_2d_slab_y, subdivide
+from test.IO.utils import make_slab_x, make_slab_y, subdivide
 
 import numpy as np
 import pytest
@@ -93,7 +93,7 @@ def test_filesave_1D_list():
     os.remove("test_Filesave_1D_list.npy")
 
 
-@pytest.mark.parametrize("decompfun", [make_2d_slab_x, make_2d_slab_y])
+@pytest.mark.parametrize("decompfun", [make_slab_x, make_slab_y])
 def test_filesave_2d(decompfun, comm, globaldata2d):
     distdata = decompfun(comm, globaldata2d)
 
@@ -113,69 +113,32 @@ def test_filesave_2d(decompfun, comm, globaldata2d):
         os.remove("test_filesave_2d.npy")
 
 
-# @pytest.mark.parametrize("decompfun", [make_2d_slab_x, make_2d_slab_y])
-# def test_filesave_multicomponent(decompfun, comm, multicomponent_globaldata):
-#     """Test saving and loading multicomponent arrays"""
-#     globaldata, nb_grid_pts, nb_components, components_are_leading = multicomponent_globaldata
+@pytest.mark.parametrize("decompfun", [make_slab_x, make_slab_y])
+def test_filesave_multicomponent(decompfun, comm, multicomponent_globaldata):
+    """Test saving and loading multicomponent arrays, when decomposed along one axis"""
 
-#     spatial_ndim = len(globaldata.shape) - len(nb_components)
+    globaldata, _, nb_components, components_are_leading = multicomponent_globaldata
+    distdata = decompfun(comm, globaldata, nb_components, components_are_leading)
 
-#     # Extract spatial shape
-#     if components_are_leading:
-#         spatial_shape = globaldata.shape[-spatial_ndim:]
-#     else:
-#         spatial_shape = globaldata.shape[:spatial_ndim]
+    fn = f"test_filesave_multicomp_{comm.size}.npy"
+    save_npy(
+        fn,
+        distdata.data,
+        distdata.subdomain_locations,
+        distdata.nb_domain_grid_pts,
+        components_are_leading=components_are_leading,
+        comm=comm,
+    )
+    comm.barrier()
+    loaded_data = np.load(fn)
+    assert_one_array_equal(comm, 0, loaded_data, globaldata)
 
-#     # Only use 2D decomposition for 2D spatial data
-#     if spatial_ndim != 2:
-#         pytest.skip("Decomposition function is only for 2D spatial grids")
-
-#     # Create a view that only looks at the first component for decomposition
-#     if components_are_leading:
-#         first_component_index = tuple([0] * len(nb_components))
-#         first_component_data = globaldata[first_component_index]
-#     else:
-#         # For trailing components, we need Ellipsis followed by all component indices
-#         first_component_index = (Ellipsis,) + tuple([0] * len(nb_components))
-#         first_component_data = globaldata[first_component_index]
-
-#     distdata = decompfun(comm, first_component_data)
-
-#     # Now build the local data with components
-#     if components_are_leading:
-#         local_shape = nb_components + distdata.nb_subdomain_grid_pts
-#         local_slices = (slice(None),) * len(nb_components) + tuple(
-#             slice(loc, loc + size)
-#             for loc, size in zip(distdata.subdomain_locations, distdata.nb_subdomain_grid_pts)
-#         )
-#     else:
-#         local_shape = distdata.nb_subdomain_grid_pts + nb_components
-#         local_slices = tuple(
-#             slice(loc, loc + size)
-#             for loc, size in zip(distdata.subdomain_locations, distdata.nb_subdomain_grid_pts)
-#         ) + (slice(None),) * len(nb_components)
-
-#     localdata = globaldata[local_slices]
-
-#     fn = f"test_filesave_multicomp_{comm.size}.npy"
-#     save_npy(
-#         fn,
-#         localdata,
-#         distdata.subdomain_locations,
-#         distdata.nb_domain_grid_pts,
-#         components_are_leading=components_are_leading,
-#         comm=comm,
-#     )
-#     comm.barrier()
-#     loaded_data = np.load(fn)
-#     assert_one_array_equal(comm, 0, loaded_data, globaldata)
-
-#     comm.barrier()
-#     if comm.rank == 0:
-#         os.remove(fn)
+    comm.barrier()
+    if comm.rank == 0:
+        os.remove(fn)
 
 
-@pytest.mark.parametrize("decompfun", [make_2d_slab_x, make_2d_slab_y])
+@pytest.mark.parametrize("decompfun", [make_slab_x, make_slab_y])
 def test_fileview_2d(decompfun, comm, globaldata2d):
     distdata = decompfun(comm, globaldata2d)
 
