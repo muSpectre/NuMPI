@@ -175,9 +175,14 @@ class Datatype(object):
             positions[i_count] += i_count * extent
 
         # Sizes are simply repeated
-        sizes = np.tile(self._chunk_sizes, count)
+        chunk_sizes = np.tile(self._chunk_sizes, count)
 
-        return Datatype(self._numpy_type, positions.ravel(), sizes)
+        # Extent is a multiplication
+        new_extent = count * extent
+
+        return Datatype(
+            self._numpy_type, positions.ravel(),
+            chunk_sizes, self._lower_bound, self._lower_bound + new_extent)
 
     def Create_vector(self, count, blocklength, stride):
         """Refer to MPI 5.0 Doc 5.1.2 Datatype Constructors MPI_TYPE_VECTOR"""
@@ -193,9 +198,14 @@ class Datatype(object):
                 positions[i_count, i_block] += (i_count * stride + i_block) * extent
 
         # Sizes are simply repeated
-        sizes = np.tile(self._chunk_sizes, count * blocklength)
+        chunk_sizes = np.tile(self._chunk_sizes, count * blocklength)
 
-        return Datatype(self._numpy_type, positions.ravel(), sizes)
+        # Extent is a multiplication
+        new_extent = count * blocklength * extent
+
+        return Datatype(
+            self._numpy_type, positions.ravel(),
+            chunk_sizes, self._lower_bound, self._lower_bound + new_extent)
 
     def Create_subarray(self, sizes, subsizes, starts, order):
         """Refer to MPI 5.0 Doc 5.1.3 Subarray Datatype Constructor MPI_TYPE_CREATE_SUBARRAY"""
@@ -224,13 +234,14 @@ class Datatype(object):
             positions[indices] += np.dot(start_offsets + indices, strides) * extent
 
         # Sizes are simply repeated
-        sizes = np.tile(self._chunk_sizes, np.multiply.reduce(subsizes))
+        chunk_sizes = np.tile(self._chunk_sizes, np.multiply.reduce(subsizes))
 
-        # For subarray, the lb and ub are the begin and end for the whole array
-        lb = 0
-        ub = np.multiply.reduce(sizes) * extent
+        # For subarray, the extent is the whole array
+        new_extent = np.multiply.reduce(sizes) * extent
 
-        return Datatype(self._numpy_type, positions.ravel(), sizes, lb, ub) 
+        return Datatype(
+            self._numpy_type, positions.ravel(),
+            chunk_sizes, self._lower_bound, self._lower_bound + new_extent)
 
 
 class BasicDatatype(Datatype):
