@@ -1,12 +1,18 @@
 """
 Constrained Conjugate Gradient for moderately nonlinear problems.
+
+This module implements the bound constrained conjugate gradient algorithm
+from Bugnicourt et al. (2018), designed for solving contact mechanics problems
+with inequality constraints. The algorithm is MPI-parallelized and supports
+mean value constraints.
+
 This implementation is mainly based upon Bugnicourt et. al. - 2018, OUT_LIN
 algorithm.
 """
 
-import numpy as np
-
 from inspect import signature
+
+import numpy as np
 
 from ..Tools import Reduction
 from .Result import OptimizeResult
@@ -17,46 +23,92 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
     """
     Constrained conjugate gradient algorithm from Bugnicourt et al. [1].
 
+    This algorithm solves bound-constrained quadratic optimization problems
+    using a conjugate gradient method with active set constraints. It is
+    particularly suited for contact mechanics problems where the solution
+    must satisfy inequality constraints (e.g., non-penetration).
+
+    The algorithm iteratively updates the solution while projecting onto
+    the feasible set defined by the bounds. It uses a Polak-Ribière-like
+    formula for updating the conjugate direction.
+
     Parameters
     ----------
     fun : callable
-        The objective function to be minimized. The function should return a float
-        (energy) and an ndarray (gradient). Note that energy is never used, you can
-        return a dummy value.
+        The objective function to be minimized. Must have signature
+        ``fun(x, *args) -> (energy, gradient)`` where energy is a float
+        and gradient is an ndarray of the same shape as x. Note that the
+        energy value is not used by this algorithm; you can return a dummy
+        value (e.g., 0.0).
     hessp : callable
-        Function to evaluate the hessian product of the objective. Hessp should
-        accept either 1 argument (descent direction) or 2 arguments (x, descent
-        direction).
+        Function to evaluate the Hessian-vector product. Must accept either:
+        - 1 argument: ``hessp(descent_direction) -> ndarray``
+        - 2 arguments: ``hessp(x, descent_direction) -> ndarray``
+        The function should return the product of the Hessian matrix with
+        the descent direction vector.
     x0 : ndarray
-        Initial guess. ValueError is raised if "None" is provided.
+        Initial guess for the solution. Must not be None.
+    args : tuple, optional
+        Extra arguments passed to `fun`. Default is ().
+    mean_val : float, optional
+        If provided, enforces a mean value constraint on the solution.
+        The algorithm will adjust the solution to maintain this mean value
+        over the non-bounded (active) region. Only compatible with fully
+        bounded systems (all elements must have finite bounds).
     gtol : float, optional
-        Convergence criterion is max(abs) and norm2 of the projected gradient <
-        gtol. Default value is 1e-8.
-    mean_value :  int/float, optional
-        If you want to apply the mean_value constraint then provide an int/float
-        value to the mean_value.
-    residual_plot : bool, optional
-        If set to True, generates a plot between the residual and iterations.
+        Gradient tolerance for convergence. The algorithm converges when
+        ``max(abs(projected_gradient)) <= gtol``. Default is 1e-8.
     maxiter : int, optional
-        Maximum number of iterations after which the program will exit. Default
-        value is 5000.
+        Maximum number of iterations. Default is 3000.
+    callback : callable, optional
+        Function called after each iteration with the current solution x.
+        Signature: ``callback(x) -> None``.
+    communicator : MPI.Comm, optional
+        MPI communicator for parallel execution. If None, runs in serial
+        mode using numpy operations.
+    bounds : ndarray, optional
+        Lower bounds for each element of x. Elements of x will be constrained
+        to be >= bounds. If None, defaults to zero bounds (equivalent to
+        non-negativity constraints).
 
     Returns
     -------
-    OptimizeResult  : scipy.optimize object.
-        The result of the optimization. The object has the following attributes:
-        - success: bool, indicates if the optimization was successful
-        - x: ndarray, the optimized parameters
-        - jac: ndarray, the residual which is equal to the gradient at x
-        - nit: int, the number of iterations performed
-        - message: str, a message describing the reason for the termination
+    result : OptimizeResult
+        The optimization result with the following attributes:
+
+        - success : bool
+            True if the algorithm converged within the tolerance.
+        - x : ndarray
+            The optimized solution.
+        - jac : ndarray
+            The residual (projected gradient) at the solution.
+        - nit : int
+            Number of iterations performed.
+        - message : str
+            Description of the termination reason.
+
+    Raises
+    ------
+    ValueError
+        If `hessp` has an unsupported number of parameters (must be 1 or 2).
+        If `mean_val` is provided but the system is only partially bounded.
+
+    Notes
+    -----
+    The algorithm maintains complementarity conditions: for each element i,
+    either x[i] > bounds[i] (inactive constraint, zero Lagrange multiplier)
+    or the projected gradient is non-negative (active constraint).
+
+    When `mean_val` is specified, the algorithm enforces that the mean of
+    the solution over the non-bounded region equals `mean_val`. This is
+    useful for problems with integral constraints.
 
     References
     ----------
-    ..[1] Bugnicourt, Romain & Sainsot, Philippe & Dureisseix, David &
+    .. [1] Bugnicourt, Romain & Sainsot, Philippe & Dureisseix, David &
         Gauthier, Catherine & Lubrecht, Ton. (2018). FFT-Based Methods
         for Solving a Rough Adhesive Contact: Description and
-        Convergence Study.
+        Convergence Study. Tribology International, 121, 200-209.
     """
     if communicator is None:
         comm = np
@@ -204,7 +256,7 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
                 })
             return result
 
-        elif i == maxiter - 1:
+        elif i == maxiter:
             result = OptimizeResult(
                 {
                     'success': False,

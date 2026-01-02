@@ -35,14 +35,56 @@ _log = logging.getLogger(__name__)
 
 
 def donothing(*args, **kwargs):
+    """No-op callback function used as default when no callback is provided."""
     pass
 
 
 def steepest_descent_wolfe2(x0, f_gradf, pnp=None, maxiter=10, args=(), **kwargs):
     """
-    For first Iteration there is no history. We make a steepest descent
-    satisfying strong Wolfe Condition
-    :return:
+    Perform a steepest descent step satisfying the strong Wolfe conditions.
+
+    This function is used for the first iteration of L-BFGS when there is no
+    history available to construct a quasi-Newton direction. It performs a
+    line search along the negative gradient direction.
+
+    Parameters
+    ----------
+    x0 : ndarray
+        Initial point, shape (-1, 1).
+    f_gradf : callable
+        Function that returns (objective_value, gradient) at a given point.
+    pnp : Reduction or numpy module, optional
+        Reduction class for MPI operations, or numpy module for serial execution.
+        If None, defaults to numpy.
+    maxiter : int, optional
+        Maximum number of line search iterations. Default is 10.
+    args : tuple, optional
+        Extra arguments passed to f_gradf.
+    **kwargs : dict
+        Additional keyword arguments passed to the line search (e.g., c1, c2
+        for Wolfe conditions).
+
+    Returns
+    -------
+    x : ndarray
+        New point after the steepest descent step.
+    gradf : ndarray
+        Gradient at the new point.
+    x0 : ndarray
+        The initial point (unchanged).
+    grad0 : ndarray
+        Gradient at the initial point.
+    phi : float
+        Objective function value at the new point.
+    phi0 : float
+        Objective function value at the initial point.
+    derphi : float
+        Directional derivative at the new point along the search direction.
+
+    Raises
+    ------
+    AssertionError
+        If the line search fails to converge.
     """
     # x_old.shape=(-1,1)
     phi0, grad0 = f_gradf(x0, *args)
@@ -246,7 +288,7 @@ def l_bfgs(
     alpha = 0  # line search step size
 
     if disp:
-        if comm.rank == 0:
+        if comm is None or comm.rank == 0:
             iteration_title = "iteration"
             phi_title = "f"
             phi_change_title = "Δf"
@@ -305,7 +347,7 @@ def l_bfgs(
         phi_change = phi_old - phi
 
         if disp:
-            if comm.rank == 0:
+            if comm is None or comm.rank == 0:
                 print(
                     f"{iteration:<10} {phi:<10.7g} {phi_change:<10.7g} {max_grad:<10.7g} {norm_grad:<10.7g}"
                 )
@@ -452,7 +494,7 @@ def l_bfgs(
         )
 
         if derphi is None:
-            if comm.rank == 0:
+            if comm is None or comm.rank == 0:
                 _log.info("line-search did not converge")
             result = OptimizeResult(
                 {
