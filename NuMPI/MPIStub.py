@@ -41,8 +41,13 @@ Communicator Methods (Intracomm)
 - ``Get_size()`` / ``size`` property - Always returns 1
 - ``Reduce(sendbuf, recvbuf, op, root)`` - Copies sendbuf to recvbuf (root must be 0)
 - ``Allreduce(sendbuf, recvbuf, op)`` - Alias for Reduce
+- ``Bcast(buf, root)`` / ``bcast`` - Broadcast (no-op, data already present)
+- ``Gather(sendbuf, recvbuf, root)`` / ``gather`` - Gather to root (copies data)
+- ``Gatherv(sendbuf, recvbuf, root)`` / ``gatherv`` - Gather with variable sizes
 - ``Allgather(sendbuf, recvbuf)`` - Copies sendbuf to recvbuf
 - ``Allgatherv(sendbuf, recvbuf)`` - Alias for Allgather
+- ``Scatter(sendbuf, recvbuf, root)`` / ``scatter`` - Scatter from root
+- ``Scatterv(sendbuf, recvbuf, root)`` / ``scatterv`` - Scatter with variable sizes
 
 File I/O (File)
 ---------------
@@ -79,10 +84,12 @@ Point-to-Point Communication
 -----------------------------
 Send, Recv, Isend, Irecv, Sendrecv, Sendrecv_replace, Probe, Iprobe, Bsend, Ssend, Rsend
 
+**Note:** Attempting to use Send/Recv/Isend/Irecv/Sendrecv/Probe/Iprobe will raise
+``NotImplementedError`` with a helpful message suggesting alternatives.
+
 Collective Operations (Missing)
 --------------------------------
-Bcast, Scatter, Scatterv, Gather, Gatherv, Alltoall, Alltoallv, Alltoallw,
-Reduce_scatter, Reduce_scatter_block, Scan, Exscan
+Alltoall, Alltoallv, Alltoallw, Reduce_scatter, Reduce_scatter_block, Scan, Exscan
 
 Advanced Features
 -----------------
@@ -561,6 +568,371 @@ class Intracomm(object):
         recvdata[...] = senddata
 
     Allgatherv = Allgather
+
+    def Bcast(self, buf, root=0):
+        """
+        Broadcast data from root to all processes.
+
+        In the single-process stub, this is a no-op since data is already
+        present on the only process.
+
+        Parameters
+        ----------
+        buf : array_like
+            Data buffer. In a multi-process environment, this would be the
+            data to send on the root process and would be filled on all
+            other processes. In the stub, no modification occurs.
+        root : int, optional
+            Rank of the broadcast root (must be 0 for stub). Default is 0.
+
+        Raises
+        ------
+        ValueError
+            If root is not 0, since the stub only supports single-process
+            execution.
+
+        Notes
+        -----
+        This operation has no effect in the stub implementation because
+        there is only one process. The data is already "broadcast" by
+        virtue of being on the only process.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from NuMPI import MPI
+        >>> data = np.array([1.0, 2.0, 3.0])
+        >>> MPI.COMM_WORLD.Bcast(data, root=0)
+        >>> # data remains unchanged (already on the only process)
+        """
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+        # No-op: in single process, data is already "broadcast"
+        pass
+
+    bcast = Bcast  # Lowercase pickle-based version (same behavior for stub)
+
+    def Gather(self, sendbuf, recvbuf, root=0):
+        """
+        Gather data from all processes to root.
+
+        In the single-process stub, this copies sendbuf to recvbuf.
+
+        Parameters
+        ----------
+        sendbuf : array_like or tuple
+            Send buffer or (send buffer, send type). Data to be sent from
+            this process.
+        recvbuf : array_like or tuple
+            Receive buffer or (receive buffer, receive type). Only used on
+            the root process. In multi-process execution, this would contain
+            data from all processes concatenated.
+        root : int, optional
+            Rank of the receiving process (must be 0 for stub). Default is 0.
+
+        Raises
+        ------
+        ValueError
+            If root is not 0.
+        TypeError
+            If send and receive buffer types do not match.
+
+        Notes
+        -----
+        In the single-process stub, this simply copies sendbuf to recvbuf
+        since there is only one process contributing data.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from NuMPI import MPI
+        >>> sendbuf = np.array([1.0, 2.0])
+        >>> recvbuf = np.zeros(2)
+        >>> MPI.COMM_WORLD.Gather(sendbuf, recvbuf, root=0)
+        >>> # recvbuf now contains [1.0, 2.0]
+        """
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+
+        # Parse send buffer
+        try:
+            senddata = sendbuf
+            sendtype = sendbuf.dtype
+        except AttributeError:
+            senddata, sendtype = sendbuf
+
+        # Parse receive buffer
+        try:
+            recvdata = recvbuf
+            recvtype = recvbuf.dtype
+        except AttributeError:
+            recvdata, recvtype = recvbuf
+
+        if sendtype != recvtype:
+            raise TypeError(
+                "Mismatch in send and receive MPI data types in MPI stub implementation. "
+                f"Send type is {sendtype} while receive type is {recvtype}."
+            )
+
+        recvdata[...] = senddata
+
+    gather = Gather  # Lowercase pickle-based version
+
+    def Gatherv(self, sendbuf, recvbuf, root=0):
+        """
+        Gather data with variable-sized contributions from all processes to root.
+
+        In the single-process stub, this behaves identically to Gather.
+
+        Parameters
+        ----------
+        sendbuf : array_like or tuple
+            Send buffer or (send buffer, send type).
+        recvbuf : tuple
+            Receive buffer specification: (recvbuf, counts, displacements, recvtype)
+            or (recvbuf, counts). Only used on root.
+        root : int, optional
+            Rank of the receiving process (must be 0 for stub). Default is 0.
+
+        Raises
+        ------
+        ValueError
+            If root is not 0.
+        TypeError
+            If send and receive buffer types do not match.
+
+        Notes
+        -----
+        The 'v' variant (variable) allows for different-sized contributions
+        from each process. In the stub, this is equivalent to Gather.
+        """
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+
+        # Parse send buffer
+        try:
+            senddata = sendbuf
+            sendtype = sendbuf.dtype
+        except AttributeError:
+            senddata, sendtype = sendbuf
+
+        # Parse receive buffer (may have counts and displacements)
+        try:
+            recvdata = recvbuf
+            recvtype = recvbuf.dtype
+        except AttributeError:
+            # Could be (recvdata, counts) or (recvdata, counts, displacements, recvtype)
+            if len(recvbuf) >= 2:
+                recvdata = recvbuf[0]
+                recvtype = recvdata.dtype if len(recvbuf) < 4 else recvbuf[3]
+            else:
+                raise ValueError("Invalid recvbuf format for Gatherv")
+
+        if sendtype != recvtype:
+            raise TypeError(
+                "Mismatch in send and receive MPI data types in MPI stub implementation. "
+                f"Send type is {sendtype} while receive type is {recvtype}."
+            )
+
+        recvdata[...] = senddata
+
+    gatherv = Gatherv  # Lowercase pickle-based version
+
+    def Scatter(self, sendbuf, recvbuf, root=0):
+        """
+        Scatter data from root to all processes.
+
+        In the single-process stub, this copies the appropriate portion of
+        sendbuf to recvbuf (simulating root sending to itself).
+
+        Parameters
+        ----------
+        sendbuf : array_like or tuple
+            Send buffer or (send buffer, send type). Only used on root.
+            In multi-process execution, this contains data for all processes.
+        recvbuf : array_like or tuple
+            Receive buffer or (receive buffer, receive type). Data received
+            by this process.
+        root : int, optional
+            Rank of the sending process (must be 0 for stub). Default is 0.
+
+        Raises
+        ------
+        ValueError
+            If root is not 0.
+        TypeError
+            If send and receive buffer types do not match.
+
+        Notes
+        -----
+        In the single-process stub, this copies the portion of sendbuf that
+        would be sent to rank 0 (i.e., the first recvbuf.size elements).
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from NuMPI import MPI
+        >>> sendbuf = np.array([1.0, 2.0, 3.0, 4.0])  # Data for 2 processes (2 each)
+        >>> recvbuf = np.zeros(2)
+        >>> MPI.COMM_WORLD.Scatter(sendbuf, recvbuf, root=0)
+        >>> # recvbuf now contains [1.0, 2.0] (first portion)
+        """
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+
+        # Parse send buffer
+        try:
+            senddata = sendbuf
+            sendtype = sendbuf.dtype
+        except AttributeError:
+            senddata, sendtype = sendbuf
+
+        # Parse receive buffer
+        try:
+            recvdata = recvbuf
+            recvtype = recvbuf.dtype
+        except AttributeError:
+            recvdata, recvtype = recvbuf
+
+        if sendtype != recvtype:
+            raise TypeError(
+                "Mismatch in send and receive MPI data types in MPI stub implementation. "
+                f"Send type is {sendtype} while receive type is {recvtype}."
+            )
+
+        # Copy the portion of sendbuf that corresponds to rank 0
+        recvdata[...] = senddata[:len(recvdata)]
+
+    scatter = Scatter  # Lowercase pickle-based version
+
+    def Scatterv(self, sendbuf, recvbuf, root=0):
+        """
+        Scatter data with variable-sized contributions from root to all processes.
+
+        In the single-process stub, this behaves similarly to Scatter.
+
+        Parameters
+        ----------
+        sendbuf : tuple
+            Send buffer specification: (sendbuf, counts, displacements, sendtype)
+            or (sendbuf, counts). Only used on root.
+        recvbuf : array_like or tuple
+            Receive buffer or (receive buffer, receive type).
+        root : int, optional
+            Rank of the sending process (must be 0 for stub). Default is 0.
+
+        Raises
+        ------
+        ValueError
+            If root is not 0.
+        TypeError
+            If send and receive buffer types do not match.
+
+        Notes
+        -----
+        The 'v' variant (variable) allows for different-sized contributions
+        to each process. In the stub, this extracts the portion specified
+        for rank 0.
+        """
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+
+        # Parse send buffer (may have counts and displacements)
+        try:
+            senddata = sendbuf
+            sendtype = sendbuf.dtype
+        except AttributeError:
+            # Could be (senddata, counts) or (senddata, counts, displacements, sendtype)
+            if len(sendbuf) >= 2:
+                senddata = sendbuf[0]
+                sendtype = senddata.dtype if len(sendbuf) < 4 else sendbuf[3]
+            else:
+                raise ValueError("Invalid sendbuf format for Scatterv")
+
+        # Parse receive buffer
+        try:
+            recvdata = recvbuf
+            recvtype = recvbuf.dtype
+        except AttributeError:
+            recvdata, recvtype = recvbuf
+
+        if sendtype != recvtype:
+            raise TypeError(
+                "Mismatch in send and receive MPI data types in MPI stub implementation. "
+                f"Send type is {sendtype} while receive type is {recvtype}."
+            )
+
+        # Copy the portion for rank 0
+        recvdata[...] = senddata[:len(recvdata)]
+
+    scatterv = Scatterv  # Lowercase pickle-based version
+
+    # Unsupported operations with helpful error messages
+
+    def Send(self, buf, dest, tag=0):
+        """Point-to-point send is not implemented in the stub."""
+        raise NotImplementedError(
+            "Point-to-point communication (Send/Recv) is not implemented in the "
+            "MPI stub. The stub only supports collective operations for single-process "
+            "execution. To use Send/Recv, please install mpi4py with a real MPI "
+            "implementation. Alternatively, consider using collective operations like "
+            "Bcast, Gather, or Allreduce which are supported."
+        )
+
+    def Recv(self, buf=None, source=0, tag=0, status=None):
+        """Point-to-point receive is not implemented in the stub."""
+        raise NotImplementedError(
+            "Point-to-point communication (Send/Recv) is not implemented in the "
+            "MPI stub. The stub only supports collective operations for single-process "
+            "execution. To use Send/Recv, please install mpi4py with a real MPI "
+            "implementation. See Send() documentation for details."
+        )
+
+    def Isend(self, buf, dest, tag=0):
+        """Non-blocking send is not implemented in the stub."""
+        raise NotImplementedError(
+            "Non-blocking communication (Isend/Irecv) is not implemented in the "
+            "MPI stub. To use non-blocking operations and Request objects, please "
+            "install mpi4py with a real MPI implementation."
+        )
+
+    def Irecv(self, buf, source=0, tag=0):
+        """Non-blocking receive is not implemented in the stub."""
+        raise NotImplementedError(
+            "Non-blocking communication (Isend/Irecv) is not implemented in the "
+            "MPI stub. To use non-blocking operations and Request objects, please "
+            "install mpi4py with a real MPI implementation."
+        )
+
+    def Sendrecv(self, sendbuf, dest, sendtag=0, recvbuf=None, source=0, recvtag=0, status=None):
+        """Send and receive is not implemented in the stub."""
+        raise NotImplementedError(
+            "Point-to-point communication (Sendrecv) is not implemented in the "
+            "MPI stub. Please install mpi4py for point-to-point operations."
+        )
+
+    def Probe(self, source=0, tag=0, status=None):
+        """Message probing is not implemented in the stub."""
+        raise NotImplementedError(
+            "Message probing (Probe/Iprobe) is not implemented in the MPI stub. "
+            "Please install mpi4py for point-to-point communication features."
+        )
+
+    def Iprobe(self, source=0, tag=0, status=None):
+        """Non-blocking message probing is not implemented in the stub."""
+        raise NotImplementedError(
+            "Message probing (Probe/Iprobe) is not implemented in the MPI stub. "
+            "Please install mpi4py for point-to-point communication features."
+        )
+
+    # Lowercase versions for unsupported operations
+    send = Send
+    recv = Recv
+    isend = Isend
+    irecv = Irecv
+    sendrecv = Sendrecv
+    probe = Probe
+    iprobe = Iprobe
 
 
 # ## Stub file I/O object

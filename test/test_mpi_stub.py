@@ -143,6 +143,156 @@ class TestIntracomm:
         """Test that Allgatherv is aliased to Allgather."""
         assert MPIStub.Intracomm.Allgatherv == MPIStub.Intracomm.Allgather
 
+    def test_bcast_is_noop(self):
+        """Test that Bcast is a no-op (doesn't modify data)."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0, 2.0, 3.0])
+        original = buf.copy()
+        comm.Bcast(buf, root=0)
+        np.testing.assert_array_equal(buf, original)
+
+    def test_bcast_rejects_nonzero_root(self):
+        """Test that Bcast raises ValueError for root != 0."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0])
+        with pytest.raises(ValueError, match="Root must be zero"):
+            comm.Bcast(buf, root=1)
+
+    def test_bcast_lowercase(self):
+        """Test lowercase bcast method."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0, 2.0])
+        comm.bcast(buf, root=0)  # Should not raise
+
+    def test_gather_with_arrays(self):
+        """Test Gather with numpy arrays."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0, 3.0])
+        recvbuf = np.zeros(3)
+        comm.Gather(sendbuf, recvbuf, root=0)
+        np.testing.assert_array_equal(recvbuf, sendbuf)
+
+    def test_gather_rejects_nonzero_root(self):
+        """Test that Gather raises ValueError for root != 0."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0])
+        recvbuf = np.zeros(1)
+        with pytest.raises(ValueError, match="Root must be zero"):
+            comm.Gather(sendbuf, recvbuf, root=1)
+
+    def test_gather_rejects_type_mismatch(self):
+        """Test that Gather raises TypeError for mismatched types."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0], dtype=np.float64)
+        recvbuf = np.zeros(1, dtype=np.int32)
+        with pytest.raises(TypeError, match="Mismatch in send and receive"):
+            comm.Gather(sendbuf, recvbuf)
+
+    def test_gather_lowercase(self):
+        """Test lowercase gather method."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0])
+        recvbuf = np.zeros(2)
+        comm.gather(sendbuf, recvbuf, root=0)
+        np.testing.assert_array_equal(recvbuf, sendbuf)
+
+    def test_gatherv_with_arrays(self):
+        """Test Gatherv with numpy arrays."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0, 3.0])
+        recvbuf = np.zeros(3)
+        comm.Gatherv(sendbuf, (recvbuf, [3]), root=0)
+        np.testing.assert_array_equal(recvbuf, sendbuf)
+
+    def test_scatter_with_arrays(self):
+        """Test Scatter with numpy arrays."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0, 3.0, 4.0])
+        recvbuf = np.zeros(2)
+        comm.Scatter(sendbuf, recvbuf, root=0)
+        # Should get first 2 elements
+        np.testing.assert_array_equal(recvbuf, [1.0, 2.0])
+
+    def test_scatter_rejects_nonzero_root(self):
+        """Test that Scatter raises ValueError for root != 0."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0])
+        recvbuf = np.zeros(1)
+        with pytest.raises(ValueError, match="Root must be zero"):
+            comm.Scatter(sendbuf, recvbuf, root=1)
+
+    def test_scatter_rejects_type_mismatch(self):
+        """Test that Scatter raises TypeError for mismatched types."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0], dtype=np.float64)
+        recvbuf = np.zeros(1, dtype=np.int32)
+        with pytest.raises(TypeError, match="Mismatch in send and receive"):
+            comm.Scatter(sendbuf, recvbuf)
+
+    def test_scatter_lowercase(self):
+        """Test lowercase scatter method."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0, 3.0])
+        recvbuf = np.zeros(2)
+        comm.scatter(sendbuf, recvbuf, root=0)
+        np.testing.assert_array_equal(recvbuf, [1.0, 2.0])
+
+    def test_scatterv_with_arrays(self):
+        """Test Scatterv with numpy arrays."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0, 2.0, 3.0, 4.0])
+        recvbuf = np.zeros(2)
+        comm.Scatterv((sendbuf, [2]), recvbuf, root=0)
+        np.testing.assert_array_equal(recvbuf, [1.0, 2.0])
+
+    def test_send_raises_not_implemented(self):
+        """Test that Send raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0])
+        with pytest.raises(NotImplementedError, match="Point-to-point communication"):
+            comm.Send(buf, dest=0)
+
+    def test_recv_raises_not_implemented(self):
+        """Test that Recv raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0])
+        with pytest.raises(NotImplementedError, match="Point-to-point communication"):
+            comm.Recv(buf, source=0)
+
+    def test_isend_raises_not_implemented(self):
+        """Test that Isend raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0])
+        with pytest.raises(NotImplementedError, match="Non-blocking communication"):
+            comm.Isend(buf, dest=0)
+
+    def test_irecv_raises_not_implemented(self):
+        """Test that Irecv raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        buf = np.array([1.0])
+        with pytest.raises(NotImplementedError, match="Non-blocking communication"):
+            comm.Irecv(buf, source=0)
+
+    def test_sendrecv_raises_not_implemented(self):
+        """Test that Sendrecv raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        sendbuf = np.array([1.0])
+        recvbuf = np.array([0.0])
+        with pytest.raises(NotImplementedError, match="Point-to-point communication"):
+            comm.Sendrecv(sendbuf, dest=0, recvbuf=recvbuf, source=0)
+
+    def test_probe_raises_not_implemented(self):
+        """Test that Probe raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        with pytest.raises(NotImplementedError, match="Message probing"):
+            comm.Probe(source=0)
+
+    def test_iprobe_raises_not_implemented(self):
+        """Test that Iprobe raises NotImplementedError."""
+        comm = MPIStub.Intracomm()
+        with pytest.raises(NotImplementedError, match="Message probing"):
+            comm.Iprobe(source=0)
+
 
 # =============================================================================
 # Datatype Tests
