@@ -30,6 +30,135 @@ NuMPI and dependent projects without an MPI installation.
 Important note: This is at present *not* the complete API, but only includes
 the features that we need in our projects. If you miss some functionality,
 implement it and submit it back to us.
+
+Supported MPI Operations
+========================
+
+Communicator Methods (Intracomm)
+---------------------------------
+- ``Barrier()`` / ``barrier`` - No-op for single process
+- ``Get_rank()`` / ``rank`` property - Always returns 0
+- ``Get_size()`` / ``size`` property - Always returns 1
+- ``Reduce(sendbuf, recvbuf, op, root)`` - Copies sendbuf to recvbuf (root must be 0)
+- ``Allreduce(sendbuf, recvbuf, op)`` - Alias for Reduce
+- ``Allgather(sendbuf, recvbuf)`` - Copies sendbuf to recvbuf
+- ``Allgatherv(sendbuf, recvbuf)`` - Alias for Allgather
+
+File I/O (File)
+---------------
+- ``Open(comm, filename, amode, info=None)`` - Open file for MPI I/O
+- ``Close()`` - Close file
+- ``Read(buf)`` / ``Read_all(buf)`` - Read data with view support
+- ``Write(buf)`` / ``Write_all(buf)`` - Write data with view support
+- ``Set_view(disp, etype, filetype)`` - Set file view with displacement and datatype
+- ``Get_position()`` - Get file pointer position in etype units
+
+Datatypes (Datatype)
+--------------------
+- ``Create_contiguous(count)`` - Create contiguous datatype (MPI-5.0 §5.1.2)
+- ``Create_vector(count, blocklength, stride)`` - Create vector datatype (MPI-5.0 §5.1.2)
+- ``Create_subarray(sizes, subsizes, starts, order)`` - Create subarray datatype (MPI-5.0 §5.1.3)
+- ``Commit()`` - Commit datatype (no-op in stub)
+- ``Free()`` / ``free()`` - Free datatype (no-op in stub)
+- ``Get_size()`` - Get datatype size in bytes
+
+Constants
+---------
+- **Operations:** MIN, MAX, SUM, PROD, LAND, BAND, LOR, BOR, LXOR, BXOR, MAXLOC, MINLOC
+- **File modes:** MODE_RDONLY, MODE_WRONLY, MODE_RDWR, MODE_CREATE, MODE_EXCL, MODE_APPEND,
+  MODE_DELETE_ON_CLOSE, MODE_UNIQUE_OPEN, MODE_SEQUENTIAL
+- **Layouts:** ORDER_C, ORDER_F
+- **Communicators:** COMM_WORLD, COMM_SELF (both single-process)
+
+Unsupported Operations
+======================
+
+The following MPI operations are **NOT** implemented in the stub:
+
+Point-to-Point Communication
+-----------------------------
+Send, Recv, Isend, Irecv, Sendrecv, Sendrecv_replace, Probe, Iprobe, Bsend, Ssend, Rsend
+
+Collective Operations (Missing)
+--------------------------------
+Bcast, Scatter, Scatterv, Gather, Gatherv, Alltoall, Alltoallv, Alltoallw,
+Reduce_scatter, Reduce_scatter_block, Scan, Exscan
+
+Advanced Features
+-----------------
+- Request objects and non-blocking operation management (Wait, Test, Waitall, etc.)
+- Communicator management (Dup, Split, Create, Free, Compare)
+- Group operations (entire Group class)
+- Topology support (Cartesian, Graph communicators)
+- Distributed graph topology
+- Neighborhood collectives
+- One-sided communication (Put, Get, Accumulate, windows)
+- Dynamic process management (Spawn, Connect, Accept)
+
+If you need these features, please install mpi4py or contribute implementations.
+
+Usage Notes
+===========
+
+**Root Rank Restriction**
+    All collective operations that take a ``root`` parameter only accept ``root=0``
+    in the stub, since there's only one process. Operations will raise ValueError
+    if root != 0.
+
+**Type Safety**
+    The stub validates that send and receive buffers have matching dtypes and raises
+    TypeError on mismatch.
+
+**File I/O**
+    File I/O operations support both file paths (as strings) and file-like objects.
+    Note that file-like object support is stub-specific and not available in mpi4py.
+
+**Serial Semantics**
+    All operations have trivial single-process semantics:
+    - Barriers are no-ops
+    - Reductions copy data (no actual reduction)
+    - Collectives involving all processes simply copy local data
+
+Example Usage
+=============
+
+Basic communicator usage::
+
+    from NuMPI import MPI
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()  # Always 0 with stub
+    size = comm.Get_size()  # Always 1 with stub
+
+Collective reduction::
+
+    import numpy as np
+    from NuMPI import MPI
+
+    # This works with both stub and mpi4py
+    sendbuf = np.array([1.0, 2.0, 3.0])
+    recvbuf = np.zeros(3)
+    MPI.COMM_WORLD.Allreduce(sendbuf, recvbuf, op=MPI.SUM)
+    # With stub: recvbuf == sendbuf (single process, no reduction needed)
+
+File I/O with datatypes::
+
+    import numpy as np
+    from NuMPI import MPI
+
+    comm = MPI.COMM_WORLD
+    data = np.arange(100, dtype='f8')
+
+    # Create a vector datatype
+    etype = MPI.BYTE
+    filetype = etype.Create_vector(count=10, blocklength=5, stride=10)
+    filetype.Commit()
+
+    # Write with view
+    fh = MPI.File.Open(comm, 'data.bin', MPI.MODE_CREATE | MPI.MODE_WRONLY)
+    fh.Set_view(disp=0, etype=etype, filetype=filetype)
+    fh.Write(data)
+    fh.Close()
 """
 
 from enum import Enum
@@ -302,12 +431,11 @@ class OpeningMode(Enum):
     MODE_WRONLY = 2
     MODE_RDWR = 3
     MODE_CREATE = 4
-    # FIXME: The following modes are not (yet) supported
-    # MODE_EXCL = 8
-    # MODE_DELETE_ON_CLOSE = 'A'
-    # MODE_UNIQUE_OPEN = 'A'
-    # MODE_SEQUENTIAL = 'A'
-    # MODE_APPEND = 'A'
+    MODE_EXCL = 8
+    MODE_DELETE_ON_CLOSE = 16
+    MODE_UNIQUE_OPEN = 32
+    MODE_SEQUENTIAL = 64
+    MODE_APPEND = 128
 
     _MODE_6 = 6
 
@@ -315,10 +443,43 @@ class OpeningMode(Enum):
         return OpeningMode(self.value | other.value)
 
     def std_mode(self):
-        if self.MODE_CREATE.value & self.value:
-            return "wb"
-        if self.MODE_WRONLY.value & self.value:
+        """
+        Convert MPI opening mode to Python file mode string.
+
+        Returns
+        -------
+        str
+            Python file mode ('rb', 'wb', 'ab', 'xb', 'r+b')
+
+        Notes
+        -----
+        MODE_DELETE_ON_CLOSE, MODE_UNIQUE_OPEN, and MODE_SEQUENTIAL are
+        accepted but not enforced in the stub implementation. They would
+        require special handling at the File object level.
+        """
+        mode_bits = self.value
+
+        # Check for exclusive creation
+        if (self.MODE_CREATE.value & mode_bits) and (self.MODE_EXCL.value & mode_bits):
+            return "xb"  # Exclusive creation, fails if file exists
+
+        # Check for append mode
+        if self.MODE_APPEND.value & mode_bits:
             return "ab"
+
+        # Check for create mode
+        if self.MODE_CREATE.value & mode_bits:
+            return "wb"
+
+        # Check for write-only mode
+        if self.MODE_WRONLY.value & mode_bits:
+            return "ab"
+
+        # Check for read-write mode
+        if self.MODE_RDWR.value & mode_bits:
+            return "r+b"
+
+        # Default to read-only
         return "rb"
 
 
@@ -326,14 +487,11 @@ MODE_RDONLY = OpeningMode.MODE_RDONLY
 MODE_WRONLY = OpeningMode.MODE_WRONLY
 MODE_RDWR = OpeningMode.MODE_RDWR
 MODE_CREATE = OpeningMode.MODE_CREATE
-
-
-# FIXME: The following modes are not (yet) supported
-# MODE_EXCL = OpeningMode.MODE_EXCL
-# MODE_DELETE_ON_CLOSE = OpeningModes.MODE_DELETE_ON_CLOSE
-# MODE_UNIQUE_OPEN = OpeningModes.MODE_UNIQUE_OPEN
-# MODE_SEQUENTIAL = OpeningModes.MODE_SEQUENTIAL
-# MODE_APPEND = OpeningModes.MODE_APPEND
+MODE_EXCL = OpeningMode.MODE_EXCL
+MODE_DELETE_ON_CLOSE = OpeningMode.MODE_DELETE_ON_CLOSE
+MODE_UNIQUE_OPEN = OpeningMode.MODE_UNIQUE_OPEN
+MODE_SEQUENTIAL = OpeningMode.MODE_SEQUENTIAL
+MODE_APPEND = OpeningMode.MODE_APPEND
 
 
 # ## Stub communicator object
@@ -410,8 +568,29 @@ class Intracomm(object):
 
 class File(object):
     @classmethod
-    def Open(cls, comm, filename, amode=MODE_RDONLY):
-        # FIXME: This method has an optional info argument
+    def Open(cls, comm, filename, amode=MODE_RDONLY, info=None):
+        """
+        Open a file for MPI I/O.
+
+        Parameters
+        ----------
+        comm : Intracomm
+            MPI communicator
+        filename : str or file-like
+            Path to file or file-like object
+        amode : OpeningMode, optional
+            File opening mode (default: MODE_RDONLY)
+        info : None, optional
+            MPI Info object for setting file access hints. Accepted but ignored
+            in the stub implementation, as it's used for optimization hints in
+            real MPI implementations.
+
+        Returns
+        -------
+        File
+            Opened MPI file object
+        """
+        # info parameter is accepted but ignored in stub implementation
         return File(comm, filename, amode)
 
     def __init__(self, comm, filename, amode):
