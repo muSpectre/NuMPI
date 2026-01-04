@@ -290,7 +290,7 @@ class Datatype(object):
         """Return the number of bytes occupied by entries in the datatype."""
         if len(self._chunk_sizes) == 0:
             return 0
-        return np.multiply.reduce(self._chunk_sizes) * self._numpy_type.itemsize
+        return np.sum(self._chunk_sizes) * self._numpy_type.itemsize
 
     def Commit(self):
         pass
@@ -338,8 +338,9 @@ class Datatype(object):
         # Sizes are simply repeated
         chunk_sizes = np.tile(self._chunk_sizes, count * blocklength)
 
-        # Extent is a multiplication
-        new_extent = count * blocklength * extent
+        # Extent: from start to end of last block
+        # Last block starts at (count-1)*stride, ends at (count-1)*stride + blocklength
+        new_extent = ((count - 1) * stride + blocklength) * extent
 
         return Datatype(
             self._numpy_type, positions.ravel(),
@@ -347,6 +348,11 @@ class Datatype(object):
 
     def Create_subarray(self, sizes, subsizes, starts, order):
         """Refer to MPI 5.0 Doc 5.1.3 Subarray Datatype Constructor MPI_TYPE_CREATE_SUBARRAY"""
+        # Convert to numpy arrays and tuples for consistent handling
+        sizes = np.asarray(sizes)
+        subsizes = np.asarray(subsizes)
+        starts = np.asarray(starts)
+
         # check
         assert len(subsizes) == len(sizes)
         assert len(starts) == len(sizes)
@@ -357,9 +363,9 @@ class Datatype(object):
             return Datatype(self._numpy_type, [], [])
 
         # More or less a multidimensional version of 'Create_vector', plus some extra offsets due to 'starts'
-        positions = np.tile(self._chunk_positions, subsizes).reshape(*subsizes, -1)
+        positions = np.tile(self._chunk_positions, tuple(subsizes)).reshape(*subsizes, -1)
         extent = self._upper_bound - self._lower_bound
-        start_offsets = np.asarray(starts)
+        start_offsets = starts
 
         # Compute strides
         if order is ORDER_F:
@@ -368,8 +374,8 @@ class Datatype(object):
             strides = np.flip(np.multiply.accumulate(np.flip([*sizes, 1]))[:-1])
 
         # Add corresponding displacements for each repetition
-        for indices in np.ndindex(subsizes):
-            positions[indices] += np.dot(start_offsets + indices, strides) * extent
+        for indices in np.ndindex(tuple(subsizes)):
+            positions[indices] += np.dot(start_offsets + np.array(indices), strides) * extent
 
         # Sizes are simply repeated
         chunk_sizes = np.tile(self._chunk_sizes, np.multiply.reduce(subsizes))
@@ -1008,10 +1014,9 @@ class File(object):
                     data += self._file.read(size * e_size)
             buf[...] = np.frombuffer(data, dtype=buf.dtype, count=buf.size).reshape(
                 buf.shape, order='F' if not buf.flags.c_contiguous else 'C')
-            self._view_start = self._file.tell()
         except Exception:
             if not self.already_open:
-                self.close()
+                self.Close()
 
     Read_all = Read
 
@@ -1034,7 +1039,6 @@ class File(object):
                 nb_bytes = size * e_size
                 self._file.write(buf[i_byte: i_byte + nb_bytes])
                 i_byte += nb_bytes
-        self._view_start = self._file.tell()
 
     Write_all = Write
 
