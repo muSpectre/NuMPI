@@ -288,6 +288,8 @@ class Datatype(object):
 
     def Get_size(self):
         """Return the number of bytes occupied by entries in the datatype."""
+        if len(self._chunk_sizes) == 0:
+            return 0
         return np.multiply.reduce(self._chunk_sizes) * self._numpy_type.itemsize
 
     def Commit(self):
@@ -466,6 +468,9 @@ class OpeningMode(Enum):
         """
         mode_bits = self.value
 
+        # Extract access mode (lower 2 bits: RDONLY=1, WRONLY=2, RDWR=3)
+        access_mode = mode_bits & 0x3
+
         # Check for exclusive creation
         if (self.MODE_CREATE.value & mode_bits) and (self.MODE_EXCL.value & mode_bits):
             return "xb"  # Exclusive creation, fails if file exists
@@ -478,16 +483,13 @@ class OpeningMode(Enum):
         if self.MODE_CREATE.value & mode_bits:
             return "wb"
 
-        # Check for write-only mode
-        if self.MODE_WRONLY.value & mode_bits:
-            return "ab"
-
-        # Check for read-write mode
-        if self.MODE_RDWR.value & mode_bits:
+        # Check access mode
+        if access_mode == self.MODE_RDWR.value:
             return "r+b"
-
-        # Default to read-only
-        return "rb"
+        elif access_mode == self.MODE_WRONLY.value:
+            return "ab"
+        else:  # MODE_RDONLY or default
+            return "rb"
 
 
 MODE_RDONLY = OpeningMode.MODE_RDONLY
