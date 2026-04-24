@@ -4,7 +4,9 @@ Constrained Conjugate Gradient for moderately nonlinear problems.
 This module implements the bound constrained conjugate gradient algorithm
 from Bugnicourt et al. (2018), designed for solving contact mechanics problems
 with inequality constraints. The algorithm is MPI-parallelized and supports
-mean value constraints.
+an optional linear equality constraint (e.g. a prescribed mean value, or more
+generally a weighted integral constraint such as a fixed liquid volume in a
+phase-field model).
 
 This implementation is mainly based upon Bugnicourt et. al. - 2018, OUT_LIN
 algorithm.
@@ -15,10 +17,13 @@ from inspect import signature
 import numpy as np
 
 from ..Tools import Reduction
+from .LinearConstraint import LinearConstraint
 from .Result import OptimizeResult
 
 
-def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol=1e-8, maxiter=3000, callback=None,
+def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None,
+                                    linear_constraint=None,
+                                    gtol=1e-8, maxiter=3000, callback=None,
                                     communicator=None, bounds=None):
     """
     Constrained conjugate gradient algorithm from Bugnicourt et al. [1].
@@ -51,10 +56,19 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
     args : tuple, optional
         Extra arguments passed to `fun`. Default is ().
     mean_val : float, optional
-        If provided, enforces a mean value constraint on the solution.
-        The algorithm will adjust the solution to maintain this mean value
-        over the non-bounded (active) region. Only compatible with fully
-        bounded systems (all elements must have finite bounds).
+        If provided, enforces a mean value constraint on the solution over
+        the non-bounded (active) region. Equivalent to passing
+        ``linear_constraint=LinearConstraint(np.ones_like(x0), mean_val * N)``
+        where ``N`` is the global number of degrees of freedom. Only
+        compatible with fully bounded systems (all elements must have finite
+        bounds). Provided for backwards compatibility; prefer
+        ``linear_constraint`` for new code.
+    linear_constraint : LinearConstraint, optional
+        A general linear equality constraint ``<a, x> = target``. When set,
+        the descent direction is tangent-projected against ``a`` after each
+        gradient evaluation and the iterate is projected back onto
+        ``{x : <a, x> = target, x >= bounds}`` after each line step. Mutually
+        exclusive with ``mean_val``.
     gtol : float, optional
         Gradient tolerance for convergence. The algorithm converges when
         ``max(abs(projected_gradient)) <= gtol``. Default is 1e-8.
@@ -92,6 +106,7 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
     ValueError
         If `hessp` has an unsupported number of parameters (must be 1 or 2).
         If `mean_val` is provided but the system is only partially bounded.
+        If both `mean_val` and `linear_constraint` are set.
 
     Notes
     -----
@@ -99,9 +114,18 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
     either x[i] > bounds[i] (inactive constraint, zero Lagrange multiplier)
     or the projected gradient is non-negative (active constraint).
 
-    When `mean_val` is specified, the algorithm enforces that the mean of
-    the solution over the non-bounded region equals `mean_val`. This is
-    useful for problems with integral constraints.
+    When a linear equality constraint is supplied (either ``mean_val`` or
+    ``linear_constraint``), the algorithm additionally enforces
+    ``<a, x> = target`` by: (i) removing the tangential component
+    ``lambda * a`` from the residual (with ``lambda`` restricted to the
+    non-bounded indices), and (ii) projecting ``x`` back onto the constraint
+    hyperplane after each line step.
+
+    **MPI contract.** ``x0``, ``bounds``, and ``linear_constraint.a`` are
+    *local* per-rank slices; the gradient returned by ``fun`` is local; the
+    scalar energy returned by ``fun`` (if any) and ``linear_constraint.target``
+    are **global**. See the "MPI Conventions" section of the top-level README
+    for details and a worked example.
 
     References
     ----------
@@ -125,12 +149,24 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
 
     mask_bounds = bounds > - np.inf
     nb_bounds = comm.sum(np.count_nonzero(mask_bounds))
-    mean_bounds = comm.sum(bounds) / nb_bounds
 
+    # --- Normalise the linear-equality constraint --------------------------
+    # Accept either the old `mean_val` convenience kwarg (uniform weights) or
+    # a generic LinearConstraint. When set, run the projection / tangent
+    # steps in the iteration loop below.
+    if mean_val is not None and linear_constraint is not None:
+        raise ValueError(
+            "Pass either mean_val or linear_constraint, not both."
+        )
     if mean_val is not None and nb_bounds < nb_DOF:
         raise ValueError("mean_value constrained mode not compatible "
                          "with partially bound system")
         # There are ambiguities on how to compute the mean values
+    if mean_val is not None:
+        linear_constraint = LinearConstraint(np.ones_like(x),
+                                             target=float(mean_val) * nb_DOF,
+                                             pnp=comm)
+    constrained = linear_constraint is not None
 
     '''Initial Residual = A^(-1).(U) - d A −1 .(U ) −  ∂ψadh/∂g'''
     residual = fun(x, *args)[1]
@@ -138,23 +174,23 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
     mask_neg = x <= bounds
     x[mask_neg] = bounds[mask_neg]
 
-    if mean_val is not None:
-        #
-        mask_nonzero = x > bounds
-        N_mask_nonzero = comm.sum(np.count_nonzero(mask_nonzero))
-        residual = residual - comm.sum(residual[mask_nonzero]) / N_mask_nonzero
+    if constrained:
+        # Tangent-project the residual over the free (non-bounded) indices:
+        # res <- res - lambda * a  with lambda = <a_free, res_free>/<a_free, a_free>.
+        mask_free = x > bounds
+        residual = linear_constraint.tangent(residual, mask=mask_free)
 
     '''Apply the admissible Lagrange multipliers.'''
     mask_res = residual >= 0
     mask_bounded = np.logical_and(mask_neg, mask_res)
     residual[mask_bounded] = 0.0
 
-    if mean_val is not None:
-        #
-        mask_nonzero = residual != 0
-        N_nonzero = comm.sum(np.count_nonzero(mask_nonzero))
-        residual[mask_nonzero] = residual[mask_nonzero] - comm.sum(
-            residual[mask_nonzero]) / N_nonzero
+    if constrained:
+        # Zeroing the residual at bound-active indices breaks tangent
+        # orthogonality; re-project over indices that survived.
+        mask_active = residual != 0
+        residual = linear_constraint.tangent(residual, mask=mask_active)
+
     '''INITIAL DESCENT DIRECTION'''
     des_dir = -residual
 
@@ -192,12 +228,13 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
         mask_neg = x <= bounds
         x[mask_neg] = bounds[mask_neg]
 
-        if mean_val is not None:
-            # x = (mean_val / comm.sum(x) * nb_DOF) * x
-            # below is just a more complicated version of this compatible with
-            # more general bounds
-            x = bounds + (mean_val - mean_bounds) \
-                / (comm.sum(x) / nb_DOF - mean_bounds) * (x - bounds)
+        if constrained:
+            # Euclidean projection onto {x : <a, x> = target, x >= bounds}.
+            # Upper bound is unused (hi=None is treated as +infinity).
+            x = linear_constraint.project(x, lo=bounds)
+            # Refresh the bound-active mask — the projection may pull nodes
+            # back above `bounds` or push others down to them.
+            mask_neg = x <= bounds
         residual_old = residual
 
         '''
@@ -206,23 +243,18 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None, gtol
         '''
         residual = fun(x, *args)[1]
 
-        if mean_val is not None:
-            mask_nonzero = x > bounds
-            N_mask_nonzero = comm.sum(np.count_nonzero(mask_nonzero))
-            residual = residual - comm.sum(
-                residual[mask_nonzero]) / N_mask_nonzero
+        if constrained:
+            mask_free = x > bounds
+            residual = linear_constraint.tangent(residual, mask=mask_free)
 
         '''Apply the admissible Lagrange multipliers.'''
         mask_res = residual >= 0
         mask_bounded = np.logical_and(mask_neg, mask_res)
         residual[mask_bounded] = 0.0
 
-        if mean_val is not None:
-            mask_nonzero = residual != 0
-            N_nonzero = comm.sum(np.count_nonzero(mask_nonzero))
-            residual[mask_nonzero] = residual[mask_nonzero] - comm.sum(
-                residual[mask_nonzero]) / N_nonzero
-            # assert np.mean(residual) < 1e-14 * np.max(abs(residual))
+        if constrained:
+            mask_active = residual != 0
+            residual = linear_constraint.tangent(residual, mask=mask_active)
 
         '''Computing beta for updating descent direction
             In Bugnicourt's paper:

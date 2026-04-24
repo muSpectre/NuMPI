@@ -193,6 +193,13 @@ def l_bfgs(
         attributes are: x the solution array, success a Boolean flag indicating if the
         optimizer exited successfully and message which describes the cause of the
         termination.
+
+    Notes
+    -----
+    **MPI contract.** ``x`` and the gradient returned by ``fun``/``jac`` are
+    *local* per-rank slices; the scalar energy returned by ``fun`` must be
+    **globally reduced** (same value on every rank). See the "MPI
+    Conventions" section of the top-level README.
     """
     # user can provide x in the shape of his convenience
     # but we will work with the shape (-1, 1)

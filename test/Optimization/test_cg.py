@@ -12,6 +12,7 @@ except ModuleNotFoundError:
 
 from test.Optimization.MPIMinimizationProblems import MPI_Quadratic
 
+from NuMPI.Optimization import LinearConstraint
 from NuMPI.Optimization.CCGWithoutRestart import \
     constrained_conjugate_gradients
 from NuMPI.Tools import Reduction
@@ -130,3 +131,93 @@ def test_bugnicourt_cg_mean_val_active_bounds(comm):
     )
     parallel_assert(comm, res.success, res.message)
     print(res.nit)
+
+
+# ----------------------------------------------------------------------------
+# Generic LinearConstraint path — the weighted generalization of mean_val.
+# ----------------------------------------------------------------------------
+
+def test_bugnicourt_cg_linear_constraint_uniform_matches_mean_val(comm):
+    """
+    A LinearConstraint with uniform weights and target = mean_val * N must
+    produce the same minimiser as the legacy mean_val kwarg.
+    """
+    n = 128
+    np.random.seed(0)
+    obj = MPI_Quadratic(n, pnp=Reduction(comm))
+
+    xstart = np.random.normal(size=obj.nb_subdomain_grid_pts)
+    ones = np.ones_like(xstart)
+    nb_DOF = Reduction(comm).sum(xstart.size) if comm is not None else xstart.size
+
+    res_legacy = constrained_conjugate_gradients(
+        obj.f_grad, obj.hessian_product, args=(2,),
+        x0=xstart, mean_val=0.5, communicator=comm,
+    )
+    parallel_assert(comm, res_legacy.success, res_legacy.message)
+
+    lc = LinearConstraint(
+        ones, target=0.5 * nb_DOF,
+        pnp=Reduction(comm) if comm is not None else np,
+    )
+    res_generic = constrained_conjugate_gradients(
+        obj.f_grad, obj.hessian_product, args=(2,),
+        x0=xstart, linear_constraint=lc, communicator=comm,
+    )
+    parallel_assert(comm, res_generic.success, res_generic.message)
+
+    # Both paths should agree on the minimiser.
+    assert_all_allclose(comm, res_legacy.x, res_generic.x, atol=1e-6)
+
+
+def test_bugnicourt_cg_linear_constraint_non_uniform(comm):
+    """
+    Non-uniform weights exercise the generalised path that was previously
+    unreachable (the hard-coded mean-value logic only handled a = 1).
+    """
+    n = 128
+    np.random.seed(2)
+    obj = MPI_Quadratic(n, pnp=Reduction(comm))
+
+    xstart = np.random.normal(size=obj.nb_subdomain_grid_pts)
+    a_local = np.abs(np.random.normal(size=xstart.size)) + 0.1
+    # target chosen to be achievable (roughly half the "maximum" total load).
+    if comm is None:
+        total_a = a_local.sum()
+    else:
+        total_a = Reduction(comm).sum(a_local.sum())
+    target = 0.5 * total_a
+
+    lc = LinearConstraint(
+        a_local, target=target,
+        pnp=Reduction(comm) if comm is not None else np,
+    )
+    res = constrained_conjugate_gradients(
+        obj.f_grad, obj.hessian_product, args=(2,),
+        x0=xstart, linear_constraint=lc, communicator=comm,
+    )
+    parallel_assert(comm, res.success, res.message)
+
+    # Constraint must hold to high accuracy at the solution.
+    if comm is None:
+        dot = np.dot(a_local, res.x.flatten())
+    else:
+        dot = Reduction(comm).sum(a_local * res.x.flatten())
+    assert abs(dot - target) < 1e-6
+
+
+def test_bugnicourt_cg_rejects_both_mean_val_and_linear_constraint(comm):
+    n = 128
+    obj = MPI_Quadratic(n, pnp=Reduction(comm))
+    xstart = np.zeros(obj.nb_subdomain_grid_pts)
+    lc = LinearConstraint(
+        np.ones_like(xstart), target=1.0,
+        pnp=Reduction(comm) if comm is not None else np,
+    )
+    import pytest
+    with pytest.raises(ValueError):
+        constrained_conjugate_gradients(
+            obj.f_grad, obj.hessian_product, args=(2,),
+            x0=xstart, mean_val=1.0, linear_constraint=lc,
+            communicator=comm,
+        )
