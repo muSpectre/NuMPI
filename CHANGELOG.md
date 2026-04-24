@@ -1,6 +1,11 @@
 Change log for NuMPI
 ===================
 
+v0.10.0 (not yet released)
+--------------------------
+
+- ENH: L-BFGS with linear constraint
+
 v0.9.0 (24Nov25)
 ----------------
 
