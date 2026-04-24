@@ -1,8 +1,8 @@
 Change log for NuMPI
 ===================
 
-v0.10.0 (not yet released)
---------------------------
+v0.10.0 (24Apr26)
+-----------------
 
 - ENH: L-BFGS with simple box bounds
 - ENH: L-BFGS with linear constraint (and box bounds)
