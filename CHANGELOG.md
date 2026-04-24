@@ -5,6 +5,7 @@ v0.10.0 (not yet released)
 --------------------------
 
 - ENH: L-BFGS with linear constraint
+- BUG: Forward optimizer `args` to CCG Hessian-product callbacks
 
 v0.9.0 (24Nov25)
 ----------------
