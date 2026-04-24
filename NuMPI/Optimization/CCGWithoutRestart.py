@@ -21,8 +21,8 @@ from .LinearConstraint import LinearConstraint
 from .Result import OptimizeResult
 
 
-def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None,
-                                    linear_constraint=None,
+def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
+                                    mean_val=None, linear_constraint=None,
                                     gtol=1e-8, maxiter=3000, callback=None,
                                     communicator=None, bounds=None):
     """
@@ -40,11 +40,15 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None,
     Parameters
     ----------
     fun : callable
-        The objective function to be minimized. Must have signature
-        ``fun(x, *args) -> (energy, gradient)`` where energy is a float
-        and gradient is an ndarray of the same shape as x. Note that the
-        energy value is not used by this algorithm; you can return a dummy
-        value (e.g., 0.0).
+        Objective function input. Interpretation depends on ``jac``:
+
+        - ``jac=True`` (default): ``fun(x, *args) -> (energy, gradient)``
+        - ``jac=False``: ``fun(x, *args) -> gradient``
+        - ``jac`` callable: ``fun(x, *args) -> energy`` and
+          ``jac(x, *args) -> gradient``
+
+        The energy value is not used by this algorithm; in ``jac=True`` mode,
+        returning a dummy scalar (e.g., ``0.0``) is fine.
     hessp : callable
         Function to evaluate the Hessian-vector product. Must accept either:
         - 1 argument: ``hessp(descent_direction) -> ndarray``
@@ -55,6 +59,12 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None,
         Initial guess for the solution. Must not be None.
     args : tuple, optional
         Extra arguments passed to `fun`. Default is ().
+    jac : bool or callable, optional
+        Controls how gradients are obtained from ``fun``:
+
+        - ``True``: treat ``fun`` as SciPy-style ``(f, g)`` function.
+        - ``False``: treat ``fun`` as a gradient-only function.
+        - callable: use separate gradient callback ``jac(x, *args)``.
     mean_val : float, optional
         If provided, enforces a mean value constraint on the solution over
         the non-bounded (active) region. Equivalent to passing
@@ -168,8 +178,17 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None,
                                              pnp=comm)
     constrained = linear_constraint is not None
 
+    if jac is True:
+        grad = lambda x_: fun(x_, *args)[1]  # noqa: E731
+    elif jac is False:
+        grad = lambda x_: fun(x_, *args)  # noqa: E731
+    elif callable(jac):
+        grad = lambda x_: jac(x_, *args)  # noqa: E731
+    else:
+        raise ValueError("jac must be True, False, or a callable")
+
     '''Initial Residual = A^(-1).(U) - d A −1 .(U ) −  ∂ψadh/∂g'''
-    residual = fun(x, *args)[1]
+    residual = grad(x)
 
     mask_neg = x <= bounds
     x[mask_neg] = bounds[mask_neg]
@@ -241,7 +260,7 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), mean_val=None,
         In Bugnicourt's paper
         Residual = A^(-1).(U) - d A −1 .(U ) −  ∂ψadh/∂g
         '''
-        residual = fun(x, *args)[1]
+        residual = grad(x)
 
         if constrained:
             mask_free = x > bounds

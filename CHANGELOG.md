@@ -5,6 +5,8 @@ v0.10.0 (not yet released)
 --------------------------
 
 - ENH: L-BFGS with linear constraint
+- ENH: CCG now supports gradient-only objective callables via `jac=False`
+  and split objective/gradient callables via `jac=<callable>`
 
 v0.9.0 (24Nov25)
 ----------------
