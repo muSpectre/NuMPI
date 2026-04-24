@@ -7,3 +7,5 @@ build/
 **.idea/
 **.png
 *egg-info
+venv
+.venv
