@@ -118,8 +118,8 @@ def test_project_matches_scipy_qp():
         jac=lambda x: x - y,
         bounds=bnds,
         constraints=linear,
-        method="SLSQP",
-        options={"ftol": 1e-12, "maxiter": 1000},
+        method="trust-constr",
+        options={"gtol": 1e-12, "xtol": 1e-12, "maxiter": 1000},
     )
     assert res.success
     np.testing.assert_allclose(x_ours, res.x, atol=1e-6)
