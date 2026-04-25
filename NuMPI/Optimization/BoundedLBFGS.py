@@ -152,7 +152,10 @@ def l_bfgs_bounded(
     )
 
     def project(y):
-        z = np.clip(y, bounds_lo, bounds_hi)
+        if bounds_lo is None and bounds_hi is None:
+            z = np.asarray(y, dtype=float)
+        else:
+            z = np.clip(y, bounds_lo, bounds_hi)
         if zero_mask is not None:
             z = np.where(np.asarray(zero_mask), 0.0, z)
         return z
