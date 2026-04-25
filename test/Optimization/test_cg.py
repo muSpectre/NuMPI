@@ -223,6 +223,42 @@ def test_bugnicourt_cg_rejects_both_mean_val_and_linear_constraint(comm):
         )
 
 
+def test_bugnicourt_cg_accepts_gradient_only_fun_with_jac_false(comm):
+    np.random.seed(3)
+    n = 64
+    obj = MPI_Quadratic(n, pnp=Reduction(comm))
+
+    xstart = np.random.normal(size=obj.nb_subdomain_grid_pts)
+
+    res = constrained_conjugate_gradients(
+        obj.grad,
+        obj.hessian_product,
+        args=(2,),
+        jac=False,
+        x0=xstart,
+        communicator=comm,
+    )
+    parallel_assert(comm, res.success, res.message)
+
+
+def test_bugnicourt_cg_accepts_split_fun_and_jac_callable(comm):
+    np.random.seed(4)
+    n = 64
+    obj = MPI_Quadratic(n, pnp=Reduction(comm))
+
+    xstart = np.random.normal(size=obj.nb_subdomain_grid_pts)
+
+    res = constrained_conjugate_gradients(
+        obj.f,
+        obj.hessian_product,
+        args=(2,),
+        jac=obj.grad,
+        x0=xstart,
+        communicator=comm,
+    )
+    parallel_assert(comm, res.success, res.message)
+
+
 def test_bugnicourt_cg_forwards_args_to_hessp(comm):
     np.random.seed(1)
     n = 32

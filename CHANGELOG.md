@@ -7,6 +7,8 @@ v0.10.0 (24Apr26)
 - BUG: Forward optimizer `args` to CCG Hessian-product callbacks
 - ENH: L-BFGS with simple box bounds
 - ENH: L-BFGS with linear constraint (and box bounds)
+- ENH: CCG now supports gradient-only objective callables via `jac=False`
+  and split objective/gradient callables via `jac=<callable>`
 - BUILD: Switched build system to hatchling and hatch-vcs
 
 v0.9.0 (24Nov25)
