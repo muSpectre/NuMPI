@@ -5,7 +5,10 @@ NuMPI is a collection of numerical tools for MPI-parallelized Python codes. NuMP
 
 - An (incomplete) stub implementation of the [mpi4py](https://github.com/mpi4py/mpi4py) interface to the MPI libraries. This allows running serial versions of MPI parallel code  without having `mpi4py` (and hence a full MPI stack) installed.
 - Parallel file IO in numpy's [.npy](https://docs.scipy.org/doc/numpy/reference/generated/numpy.save.html) format using MPI I/O.
-- An MPI-parallel implementation of the L-BFGS optimizer (including linear constraints).
+- MPI-parallel L-BFGS optimizers:
+  - `l_bfgs` — unconstrained, with a strong-Wolfe line search.
+  - `l_bfgs_bounded` — box-constrained (`lo <= x <= hi`) with optional index pinning, two-loop recursion and projected Armijo backtracking.
+  - `l_bfgs_projected` — a single linear equality `<a, x> = target` plus optional box bounds.
 - An MPI-parallel bound constrained conjugate gradients algorithm.
 
 Build status
