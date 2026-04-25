@@ -50,11 +50,15 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
         The energy value is not used by this algorithm; in ``jac=True`` mode,
         returning a dummy scalar (e.g., ``0.0``) is fine.
     hessp : callable
-        Function to evaluate the Hessian-vector product. Must accept either:
-        - 1 argument: ``hessp(descent_direction) -> ndarray``
-        - 2 arguments: ``hessp(x, descent_direction) -> ndarray``
-        The function should return the product of the Hessian matrix with
-        the descent direction vector.
+        Function to evaluate the Hessian-vector product. Accepted signatures
+        are:
+        - ``hessp(descent_direction) -> ndarray``
+        - ``hessp(x, descent_direction) -> ndarray``
+        - ``hessp(descent_direction, *args) -> ndarray``
+        - ``hessp(x, descent_direction, *args) -> ndarray``
+        where ``*args`` are the optional extra arguments passed via ``args``.
+        The function should return the product of the Hessian matrix with the
+        descent direction vector.
     x0 : ndarray
         Initial guess for the solution. Must not be None.
     args : tuple, optional
@@ -215,15 +219,22 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
 
     n_iterations = 1
 
+    hessp_nargs = len(signature(hessp).parameters)
+
     for i in range(1, maxiter + 1):
-        sig = signature(hessp)
-        if len(sig.parameters) == 2:
+        if hessp_nargs == 2 + len(args):
+            hessp_val = hessp(x, des_dir, *args)
+        elif hessp_nargs == 1 + len(args):
+            hessp_val = hessp(des_dir, *args)
+        elif hessp_nargs == 2:
             hessp_val = hessp(x, des_dir)
-        elif len(sig.parameters) == 1:
+        elif hessp_nargs == 1:
             hessp_val = hessp(des_dir)
         else:
-            raise ValueError('hessp function has to take max 1 arg (descent '
-                             'dir) or 2 args (x, descent direction)')
+            raise ValueError(
+                'Unsupported hessp signature. Expected one of '
+                '(d), (x, d), (d, *args), or (x, d, *args).'
+            )
         denominator_temp = comm.sum(des_dir.T * hessp_val)
         # Here we could evaluate this directly in Fourier space (Parseval)
         # and spare one FFT.

@@ -4,6 +4,7 @@ Change log for NuMPI
 v0.10.0 (24Apr26)
 -----------------
 
+- BUG: Forward optimizer `args` to CCG Hessian-product callbacks
 - ENH: L-BFGS with simple box bounds
 - ENH: L-BFGS with linear constraint (and box bounds)
 - ENH: CCG now supports gradient-only objective callables via `jac=False`
