@@ -221,3 +221,42 @@ def test_bugnicourt_cg_rejects_both_mean_val_and_linear_constraint(comm):
             x0=xstart, mean_val=1.0, linear_constraint=lc,
             communicator=comm,
         )
+
+
+def test_bugnicourt_cg_forwards_args_to_hessp(comm):
+    np.random.seed(1)
+    n = 32
+    xstart = np.random.normal(size=n)
+    target = np.random.normal(size=n)
+    curvature = 3.0
+
+    if comm is not None:
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        step = n // size
+        if rank == size - 1:
+            sub = slice(rank * step, None)
+        else:
+            sub = slice(rank * step, (rank + 1) * step)
+        xstart = xstart[sub]
+        target = target[sub]
+
+    def f_grad(x, scale):
+        diff = x - target
+        return 0.5 * scale * np.dot(diff, diff), scale * diff
+
+    def hessp(d, scale):
+        return scale * d
+
+    res = constrained_conjugate_gradients(
+        f_grad,
+        hessp,
+        x0=xstart,
+        args=(curvature,),
+        communicator=comm,
+        bounds=np.full_like(xstart, -np.inf),
+        gtol=1e-10,
+    )
+
+    parallel_assert(comm, res.success, res.message)
+    assert_all_allclose(comm, res.x, target, atol=1e-7)
