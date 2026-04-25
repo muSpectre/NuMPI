@@ -26,8 +26,6 @@
 
 import warnings
 
-from DiscoverVersion import get_version
-
 try:
     # raise ImportError()
     from mpi4py import MPI
@@ -40,6 +38,17 @@ except ImportError:
 
     _has_mpi4py = False
 
-from . import Tools, Optimization  # noqa: F401
+from . import Optimization, Tools  # noqa: F401
 
-__version__ = get_version('NuMPI', __file__)
+try:
+    from ._version import __version__
+except ImportError:
+    # _version.py is written by hatch-vcs at build time. If it's absent
+    # (e.g. running from an unbuilt source tree), fall back to installed
+    # distribution metadata.
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        __version__ = version("NuMPI")
+    except (ImportError, PackageNotFoundError):
+        __version__ = "0.0.0+unknown"

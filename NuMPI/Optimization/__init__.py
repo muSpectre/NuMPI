@@ -28,6 +28,10 @@ MPI-parallel optimization routines.
 Public entry points
 -------------------
 - ``l_bfgs``            : unconstrained L-BFGS with a Wolfe line search.
+- ``l_bfgs_bounded``    : bound-constrained L-BFGS (two-loop recursion,
+                          projected Armijo backtracking). Same iteration
+                          structure as ``l_bfgs_projected`` but without the
+                          linear equality.
 - ``l_bfgs_projected``  : projected L-BFGS on a single linear equality plus
                           optional box bounds (uses Armijo backtracking with
                           projection arc). Handles the same feasible set as
@@ -66,6 +70,7 @@ treatment and a worked example.
 """
 
 
+from .BoundedLBFGS import l_bfgs_bounded  # noqa F401
 from .LBFGS import l_bfgs  # noqa F401
 from .LinearConstraint import LinearConstraint  # noqa F401
 from .ProjectedLBFGS import l_bfgs_projected  # noqa F401
