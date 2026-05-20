@@ -28,9 +28,9 @@
 MPI-parallel writing of arrays in numpy's 'npy' format.
 """
 
+import contextlib
 import struct
 from ast import literal_eval
-import contextlib
 from typing import Sequence, Union
 
 import numpy as np
@@ -44,7 +44,47 @@ except ImportError:
 
 from .. import MPI
 from ..Tools import Reduction
-from .common import MPIFileTypeError, MPIFileView, decompose_shape, recover_shape
+from .common import (MPIFileTypeError, MPIFileView, decompose_shape,
+                     recover_shape)
+
+
+def _validate_subdomain(
+        comm, subdomain_locations: Sequence[int],
+        nb_subdomain_grid_pts: Sequence[int],
+        nb_grid_pts: Sequence[int]):
+    """
+    Check that the local subdomain fits inside the global grid and that the
+    subdomains across all MPI ranks tile the global grid exactly (no gaps,
+    no overlaps).
+    """
+    subdomain_locations_arr = np.asarray(subdomain_locations, dtype=np.int64)
+    nb_subdomain_grid_pts_arr = np.asarray(nb_subdomain_grid_pts, dtype=np.int64)
+    nb_grid_pts_arr = np.asarray(nb_grid_pts, dtype=np.int64)
+
+    if np.any(subdomain_locations_arr < 0):
+        raise ValueError(
+            f"subdomain_locations must be non-negative; got {tuple(subdomain_locations)}"
+        )
+
+    if np.any(subdomain_locations_arr + nb_subdomain_grid_pts_arr > nb_grid_pts_arr):
+        raise ValueError(
+            f"Local subdomain (location={tuple(subdomain_locations)}, "
+            f"size={tuple(nb_subdomain_grid_pts)}) extends beyond the global "
+            f"grid {tuple(nb_grid_pts)}"
+        )
+
+    local_nb_pts = np.array(
+        int(np.multiply.reduce(nb_subdomain_grid_pts_arr, dtype=np.int64)),
+        dtype=np.int64,
+    )
+    global_nb_pts = int(np.multiply.reduce(nb_grid_pts_arr, dtype=np.int64))
+    total_subdomain_pts = int(Reduction(comm).sum(local_nb_pts))
+    if total_subdomain_pts != global_nb_pts:
+        raise ValueError(
+            f"Sum of local subdomain sizes ({total_subdomain_pts}) does not "
+            f"match the global grid size ({global_nb_pts}); subdomains must "
+            f"tile the global grid {tuple(nb_grid_pts)} without gaps or overlaps"
+        )
 
 
 @contextlib.contextmanager
@@ -169,6 +209,8 @@ class NPYFile(MPIFileView):
         # Check value compatibility
         assert len(nb_subdomain_grid_pts) == spatial_ndim
 
+        _validate_subdomain(self.comm, subdomain_locations, nb_subdomain_grid_pts, nb_grid_pts)
+
         buf_shape = recover_shape(nb_subdomain_grid_pts, nb_components, components_are_leading)
         data = np.empty(buf_shape, dtype=self.dtype, order='F' if self.fortran_order else 'C')
         with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components,
@@ -260,6 +302,8 @@ def save_npy(
         nb_grid_pts = nb_subdomain_grid_pts
     # Check value compatibility
     assert len(nb_grid_pts) == spatial_ndim
+
+    _validate_subdomain(comm, subdomain_locations, nb_subdomain_grid_pts, nb_grid_pts)
 
     from numpy.lib.format import dtype_to_descr, magic
 

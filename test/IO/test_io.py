@@ -351,6 +351,122 @@ def test_parallel_save_multicomponent(comm, multicomponent_globaldata):
         os.remove(fn)
 
 
+def test_save_negative_subdomain_location(comm_self):
+    data = np.zeros(5)
+    with pytest.raises(ValueError, match="non-negative"):
+        save_npy(
+            "bad_save_neg.npy", data,
+            subdomain_locations=(-1,), nb_grid_pts=(10,),
+            comm=comm_self,
+        )
+
+
+def test_save_subdomain_out_of_bounds_1d(comm_self):
+    data = np.zeros(10)
+    with pytest.raises(ValueError, match="beyond the global grid"):
+        save_npy(
+            "bad_save_oob.npy", data,
+            subdomain_locations=(5,), nb_grid_pts=(10,),
+            comm=comm_self,
+        )
+
+
+def test_save_subdomain_out_of_bounds_2d(comm_self):
+    data = np.zeros((4, 4))
+    with pytest.raises(ValueError, match="beyond the global grid"):
+        save_npy(
+            "bad_save_oob_2d.npy", data,
+            subdomain_locations=(0, 3), nb_grid_pts=(4, 4),
+            comm=comm_self,
+        )
+
+
+def test_save_subdomain_does_not_tile_grid_1d(comm_self):
+    data = np.zeros(5)
+    with pytest.raises(ValueError, match="tile"):
+        save_npy(
+            "bad_save_tile.npy", data,
+            subdomain_locations=(0,), nb_grid_pts=(10,),
+            comm=comm_self,
+        )
+
+
+def test_save_subdomain_does_not_tile_grid_2d(comm_self):
+    data = np.zeros((4, 4))
+    with pytest.raises(ValueError, match="tile"):
+        save_npy(
+            "bad_save_tile_2d.npy", data,
+            subdomain_locations=(0, 0), nb_grid_pts=(8, 4),
+            comm=comm_self,
+        )
+
+
+def test_save_subdomain_does_not_tile_grid_parallel(comm):
+    """Each rank reports a too-small subdomain so the total doesn't cover the global grid."""
+    if comm.size == 1:
+        pytest.skip("requires more than one process")
+    rank = comm.rank
+    # Each rank owns one point; global grid claims 100 points -> mismatch.
+    data = np.zeros(1)
+    with pytest.raises(ValueError, match="tile"):
+        save_npy(
+            "bad_save_tile_parallel.npy", data,
+            subdomain_locations=(rank,), nb_grid_pts=(100,),
+            comm=comm,
+        )
+
+
+def test_load_negative_subdomain_location(comm_self, npyfile):
+    np.save(npyfile, np.zeros(10))
+    with pytest.raises(ValueError, match="non-negative"):
+        load_npy(
+            npyfile,
+            subdomain_locations=(-1,), nb_subdomain_grid_pts=(10,),
+            comm=comm_self,
+        )
+
+
+def test_load_subdomain_out_of_bounds(comm_self, npyfile):
+    np.save(npyfile, np.zeros(10))
+    with pytest.raises(ValueError, match="beyond the global grid"):
+        load_npy(
+            npyfile,
+            subdomain_locations=(5,), nb_subdomain_grid_pts=(10,),
+            comm=comm_self,
+        )
+
+
+def test_load_subdomain_does_not_tile_grid(comm_self, npyfile):
+    np.save(npyfile, np.zeros(10))
+    with pytest.raises(ValueError, match="tile"):
+        load_npy(
+            npyfile,
+            subdomain_locations=(0,), nb_subdomain_grid_pts=(5,),
+            comm=comm_self,
+        )
+
+
+def test_load_subdomain_does_not_tile_grid_parallel(comm):
+    """Each rank claims a too-small subdomain so the total doesn't cover the global grid."""
+    if comm.size == 1:
+        pytest.skip("requires more than one process")
+    fn = "bad_load_tile_parallel.npy"
+    if comm.rank == 0:
+        np.save(fn, np.zeros(100))
+    comm.barrier()
+    try:
+        with pytest.raises(ValueError, match="tile"):
+            load_npy(
+                fn,
+                subdomain_locations=(comm.rank,), nb_subdomain_grid_pts=(1,),
+                comm=comm,
+            )
+    finally:
+        comm.barrier()
+        if comm.rank == 0:
+            os.remove(fn)
+
+
 def test_parallel_load_multicomponent(comm, multicomponent_globaldata):
     """Test parallel load of multicomponent arrays"""
     globaldata, _, nb_components, components_are_leading = multicomponent_globaldata
