@@ -1,6 +1,12 @@
 Change log for NuMPI
 ===================
 
+v0.11.0 (20May26)
+-----------------
+
+- ENH: `save_npy`/`load_npy` now validate subdomain bounds and check that
+  subdomains tile the global grid (raise `ValueError` on malformed input)
+
 v0.10.0 (24Apr26)
 -----------------
 
