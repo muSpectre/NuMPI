@@ -251,6 +251,48 @@ def test_mpi_box_plus_linear_constraint(comm):
     parallel_assert(comm, res.x.min() >= -1e-12 and res.x.max() <= 1 + 1e-12)
 
 
+def test_mismatched_reduction_raises(comm):
+    """
+    A LinearConstraint built with the default (numpy / local) reduction while
+    the solver runs in parallel reduces the constraint per-rank, driving the
+    global <a, x> to target * nprocs. The solver must reject this rather than
+    silently solving the wrong problem.
+
+    The mismatch is only detectable with more than one rank; on a single rank
+    a numpy reduction and an MPI reduction are equivalent, so the call is
+    accepted (and must not raise).
+    """
+    N_global = 64
+    rng = np.random.default_rng(11)
+    a_global = np.abs(rng.normal(size=N_global)) + 0.1
+    y_global = rng.normal(size=N_global)
+    V = 2.0
+
+    a_local = _distribute(a_global, comm)
+    y_local = _distribute(y_global, comm)
+    pnp = Reduction(comm)
+
+    def fun_grad(x):
+        diff = x - y_local
+        return 0.5 * pnp.sum(diff * diff).item(), diff
+
+    # Constraint built WITHOUT an MPI-aware pnp (defaults to numpy / local).
+    lc_local = LinearConstraint(a_local, V)
+
+    if comm.Get_size() == 1:
+        res = l_bfgs_projected(
+            fun_grad, np.zeros_like(y_local), lc_local, jac=True, comm=comm,
+            gtol=1e-10,
+        )
+        assert res.success, res.message
+    else:
+        with pytest.raises(ValueError):
+            l_bfgs_projected(
+                fun_grad, np.zeros_like(y_local), lc_local, jac=True, comm=comm,
+                gtol=1e-10,
+            )
+
+
 def test_mpi_matches_serial(comm):
     """
     Stronger check: run the same problem in serial (numpy reductions) and in

@@ -379,3 +379,63 @@ class Reduction:
         Uses MPI logical AND (MPI.LAND) to combine local results.
         """
         return self._op1(np.all, arr, MPI.LAND, *args, **kwargs)
+
+
+def _comm_of(pnp):
+    """
+    Underlying communicator of a reduction wrapper.
+
+    A plain ``numpy`` reduction (the serial fallback) has no communicator and
+    is mapped to ``MPI.COMM_SELF``, i.e. a single-rank group, which is exactly
+    its reduction semantics.
+    """
+    if pnp is np:
+        return MPI.COMM_SELF
+    comm = getattr(pnp, "comm", None)
+    return MPI.COMM_SELF if comm is None else comm
+
+
+def same_reduction_group(pnp_a, pnp_b):
+    """
+    Return ``True`` if two reduction wrappers reduce over the same group of
+    MPI ranks.
+
+    Comparing the wrapper objects directly (``pnp_a is pnp_b`` or ``==``) is
+    *not* a reliable check: a solver handed a bare ``comm`` builds its own
+    ``Reduction(comm)`` internally, so even correct usage produces two distinct
+    ``Reduction`` instances wrapping the same communicator. Correctness depends
+    only on the communicator's process group, not on object identity, so we
+    compare the communicators with ``MPI.Comm.Compare`` and accept ``IDENT`` /
+    ``CONGRUENT`` (identical group membership).
+
+    A ``numpy`` reduction is treated as a single-rank communicator; if both
+    sides reduce over a single rank they are trivially compatible. This also
+    covers the serial MPI stub, which is always size 1 and has no ``Compare``.
+
+    Parameters
+    ----------
+    pnp_a, pnp_b : module-like
+        Reduction wrappers to compare (``Reduction`` instances or ``numpy``).
+
+    Returns
+    -------
+    bool
+    """
+    comm_a = _comm_of(pnp_a)
+    comm_b = _comm_of(pnp_b)
+    # Same communicator object: unambiguously compatible.
+    if comm_a is comm_b:
+        return True
+    # Both reduce over a single rank (numpy and/or the serial stub): the
+    # reduction is the identity, so the group is immaterial.
+    if comm_a.Get_size() == 1 and comm_b.Get_size() == 1:
+        return True
+    # Real mpi4py: compare process groups. `Comm.Compare` is a local
+    # operation, so this is safe to call outside a collective context.
+    comm_cls = getattr(MPI, "Comm", None)
+    compare = getattr(comm_cls, "Compare", None)
+    if compare is None:
+        # MPI stub exposes no `Comm`/`Compare`; every stub communicator is size
+        # 1 and is handled above. Fall back to a conservative size comparison.
+        return comm_a.Get_size() == comm_b.Get_size()
+    return compare(comm_a, comm_b) in (MPI.IDENT, MPI.CONGRUENT)

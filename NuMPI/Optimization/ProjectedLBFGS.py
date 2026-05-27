@@ -51,6 +51,7 @@ import logging
 import numpy as np
 
 from ..Tools import Reduction
+from ..Tools.Reduction import same_reduction_group
 from ._lbfgs_helpers import _armijo, _kkt_residual, _twoloop_direction
 from .Result import OptimizeResult
 
@@ -190,6 +191,20 @@ def l_bfgs_projected(
 
     if linear_constraint is None:
         raise ValueError("l_bfgs_projected requires a LinearConstraint.")
+
+    # The constraint carries its own reduction (`linear_constraint.pnp`), used
+    # by `project` and `multiplier`. If it does not reduce over the same group
+    # of ranks as the solver, the projection enforces <a, x> = target per-rank
+    # and the achieved global value becomes target * nprocs. Catch the mismatch
+    # rather than silently solving the wrong problem.
+    if not same_reduction_group(linear_constraint.pnp, pnp):
+        raise ValueError(
+            "The LinearConstraint's reduction does not reduce over the same "
+            "MPI ranks as l_bfgs_projected. Build the constraint with the same "
+            "communicator, e.g. LinearConstraint(a, target, pnp=Reduction(comm)). "
+            "Otherwise the constraint <a, x> = target is enforced per-rank and "
+            "the achieved global value is target * nprocs."
+        )
 
     original_shape = np.asarray(x0).shape
 
