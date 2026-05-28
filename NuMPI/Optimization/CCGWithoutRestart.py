@@ -17,6 +17,7 @@ from inspect import signature
 import numpy as np
 
 from ..Tools import Reduction
+from ..Tools.Reduction import same_reduction_group
 from .LinearConstraint import LinearConstraint
 from .Result import OptimizeResult
 
@@ -181,6 +182,23 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
                                              target=float(mean_val) * nb_DOF,
                                              pnp=comm)
     constrained = linear_constraint is not None
+
+    # A caller-supplied LinearConstraint carries its own reduction
+    # (`linear_constraint.pnp`), used by `project` and `tangent`. If it does
+    # not reduce over the same ranks as this solver, the constraint
+    # <a, x> = target is enforced per-rank and the achieved global value
+    # becomes target * nprocs. Reject the mismatch rather than silently
+    # solving the wrong problem. (The internally built mean_val constraint
+    # uses `pnp=comm`, so it passes trivially.)
+    if constrained and not same_reduction_group(linear_constraint.pnp, comm):
+        raise ValueError(
+            "The LinearConstraint's reduction does not reduce over the same "
+            "MPI ranks as constrained_conjugate_gradients. Build the constraint "
+            "with the same communicator, e.g. "
+            "LinearConstraint(a, target, pnp=Reduction(communicator)). Otherwise "
+            "the constraint <a, x> = target is enforced per-rank and the "
+            "achieved global value is target * nprocs."
+        )
 
     if jac is True:
         grad = lambda x_: fun(x_, *args)[1]  # noqa: E731

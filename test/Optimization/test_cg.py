@@ -223,6 +223,39 @@ def test_bugnicourt_cg_rejects_both_mean_val_and_linear_constraint(comm):
         )
 
 
+def test_bugnicourt_cg_rejects_mismatched_reduction(comm):
+    """
+    A LinearConstraint built with the default (numpy / local) reduction while
+    the solver runs in parallel reduces the constraint per-rank, driving the
+    global <a, x> to target * nprocs. The solver must reject this rather than
+    silently solving the wrong problem.
+
+    The mismatch is only detectable with more than one rank; on a single rank
+    a numpy reduction and an MPI reduction are equivalent, so the call is
+    accepted (and must not raise).
+    """
+    n = 128
+    np.random.seed(0)
+    obj = MPI_Quadratic(n, pnp=Reduction(comm))
+    xstart = np.random.normal(size=obj.nb_subdomain_grid_pts)
+
+    # Constraint with default pnp (numpy / local), NOT the solver's comm.
+    lc_local = LinearConstraint(np.ones_like(xstart), target=0.5 * n)
+
+    if comm.Get_size() == 1:
+        res = constrained_conjugate_gradients(
+            obj.f_grad, obj.hessian_product, args=(2,),
+            x0=xstart, linear_constraint=lc_local, communicator=comm,
+        )
+        parallel_assert(comm, res.success, res.message)
+    else:
+        with pytest.raises(ValueError):
+            constrained_conjugate_gradients(
+                obj.f_grad, obj.hessian_product, args=(2,),
+                x0=xstart, linear_constraint=lc_local, communicator=comm,
+            )
+
+
 def test_bugnicourt_cg_accepts_gradient_only_fun_with_jac_false(comm):
     np.random.seed(3)
     n = 64
