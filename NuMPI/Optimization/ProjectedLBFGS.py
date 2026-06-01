@@ -105,6 +105,7 @@ def l_bfgs_projected(
     bounds_hi=None,
     zero_mask=None,
     gtol=1e-5,
+    xtol=0.0,
     maxiter=500,
     maxcor=10,
     c1=1e-4,
@@ -139,6 +140,11 @@ def l_bfgs_projected(
     gtol : float, optional
         Convergence tolerance on the infinity norm of the box-masked tangent
         gradient. Default 1e-5.
+    xtol : float, optional
+        Convergence tolerance on the infinity norm of the iterate step
+        ``x_new - x``. When ``max(abs(x_new - x)) < xtol`` after an accepted
+        step, the solver declares convergence. Default 0.0 (disabled). Either
+        ``gtol`` or ``xtol`` triggering convergence will stop the solver.
     maxiter : int, optional
         Maximum number of outer iterations. Default 500.
     maxcor : int, optional
@@ -322,6 +328,9 @@ def l_bfgs_projected(
                 y_hist.pop()
                 rho_hist.pop()
 
+        # Step size for the xtol convergence test (computed before reassigning x).
+        step_norm = pnp.max(np.abs(x_new - x))
+
         x, phi, grad, Gp, lam, r_free = (
             x_new,
             phi_new,
@@ -350,6 +359,17 @@ def l_bfgs_projected(
                 iteration,
                 r_norm,
                 "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
+            )
+        if xtol > 0.0 and step_norm < xtol:
+            return _result(
+                True,
+                x,
+                phi,
+                grad,
+                lam,
+                iteration,
+                r_norm,
+                "CONVERGENCE: NORM_OF_STEP_<=_XTOL",
             )
 
     return _result(
