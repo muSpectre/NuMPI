@@ -105,6 +105,7 @@ def l_bfgs_projected(
     bounds_hi=None,
     zero_mask=None,
     gtol=1e-5,
+    ftol=2.2e-9,
     xtol=0.0,
     maxiter=500,
     maxcor=10,
@@ -328,8 +329,31 @@ def l_bfgs_projected(
                 y_hist.pop()
                 rho_hist.pop()
 
-        # Step size for the xtol convergence test (computed before reassigning x).
-        step_norm = pnp.max(np.abs(x_new - x))
+        if xtol > 0:
+            if pnp.max(np.abs(x_new - x)) < xtol:
+                return _result(
+                    True,
+                    x,
+                    phi,
+                    grad,
+                    lam,
+                    iteration,
+                    r_norm,
+                    "CONVERGENCE: NORM_OF_VARIABLE_STEP_<=_XTOL",
+                )
+
+        if ftol > 0:
+            if abs(phi_new - phi) < ftol * max(1, abs(phi_new), abs(phi)):
+                return _result(
+                    True,
+                    x,
+                    phi,
+                    grad,
+                    lam,
+                    iteration,
+                    r_norm,
+                    "CONVERGENCE: REL_REDUCTION_OF_F_<=_FTOL",
+                )
 
         x, phi, grad, Gp, lam, r_free = (
             x_new,
@@ -349,7 +373,7 @@ def l_bfgs_projected(
         if callback is not None:
             callback(x)
 
-        if r_norm < gtol:
+        if gtol > 0 and r_norm < gtol:
             return _result(
                 True,
                 x,
@@ -359,17 +383,6 @@ def l_bfgs_projected(
                 iteration,
                 r_norm,
                 "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
-            )
-        if xtol > 0.0 and step_norm < xtol:
-            return _result(
-                True,
-                x,
-                phi,
-                grad,
-                lam,
-                iteration,
-                r_norm,
-                "CONVERGENCE: NORM_OF_STEP_<=_XTOL",
             )
 
     return _result(
