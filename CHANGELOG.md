@@ -1,8 +1,8 @@
 Change log for NuMPI
 ===================
 
-v0.12.0 (unreleased)
---------------------
+v0.12.0 (09Jun26)
+-----------------
 
 - BUG: `load_npy` no longer requires the subdomains to tile the global grid,
   restoring partial (sub-region) reads that were rejected since v0.11.0
