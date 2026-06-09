@@ -1,6 +1,18 @@
 Change log for NuMPI
 ===================
 
+v0.12.0 (unreleased)
+--------------------
+
+- ENH: MPI-parallelized the bound constrained conjugate gradient *with* restart
+  (Polonsky & Keer 1999) and exposed it as
+  `constrained_conjugate_gradients_with_restart`; it now supports `jac`,
+  `callback`, arbitrary lower `bounds` and a `communicator`, matching the
+  without-restart variant
+- BUG: Fixed a `0 * inf = nan` in the restart variant's conjugate-direction
+  update when the free set empties, and switched its convergence test to the
+  projected (KKT) residual so it converges on fully bound-active solutions
+
 v0.11.0 (20May26)
 -----------------
 

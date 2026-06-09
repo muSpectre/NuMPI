@@ -39,7 +39,13 @@ Public entry points
 - ``constrained_conjugate_gradients`` : bound-constrained CG (Bugnicourt
                           et al. 2018), optionally with a linear equality
                           via the ``linear_constraint`` kwarg or the legacy
-                          ``mean_val`` shortcut.
+                          ``mean_val`` shortcut. Does *not* restart the
+                          conjugate direction when the active set changes.
+- ``constrained_conjugate_gradients_with_restart`` : bound-constrained CG
+                          (Polonsky & Keer 1999) that restarts the conjugate
+                          direction to steepest descent whenever the active
+                          (contact) set changes. Supports an optional
+                          ``mean_val`` equality constraint.
 - ``LinearConstraint``  : utility encapsulating a single affine constraint
                           ``<a, x> = target`` with multiplier / tangent /
                           Euclidean-projection operations.
@@ -71,6 +77,9 @@ treatment and a worked example.
 
 
 from .BoundedLBFGS import l_bfgs_bounded  # noqa F401
+from .CCGWithoutRestart import constrained_conjugate_gradients  # noqa F401
+from .CCGWithRestart import \
+    constrained_conjugate_gradients_with_restart  # noqa F401
 from .LBFGS import l_bfgs  # noqa F401
 from .LinearConstraint import LinearConstraint  # noqa F401
 from .ProjectedLBFGS import l_bfgs_projected  # noqa F401
