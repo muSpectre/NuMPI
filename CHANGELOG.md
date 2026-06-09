@@ -1,6 +1,22 @@
 Change log for NuMPI
 ===================
 
+v0.12.0 (unreleased)
+--------------------
+
+- BUG: `load_npy` no longer requires the subdomains to tile the global grid,
+  restoring partial (sub-region) reads that were rejected since v0.11.0
+  (closes #85). The tiling check is still enforced on `save_npy`, where gaps
+  or overlaps would corrupt the output file.
+- ENH: MPI-parallelized the bound constrained conjugate gradient *with* restart
+  (Polonsky & Keer 1999) and exposed it as
+  `constrained_conjugate_gradients_with_restart`; it now supports `jac`,
+  `callback`, arbitrary lower `bounds` and a `communicator`, matching the
+  without-restart variant
+- BUG: Fixed a `0 * inf = nan` in the restart variant's conjugate-direction
+  update when the free set empties, and switched its convergence test to the
+  projected (KKT) residual so it converges on fully bound-active solutions
+
 v0.11.0 (20May26)
 -----------------
 

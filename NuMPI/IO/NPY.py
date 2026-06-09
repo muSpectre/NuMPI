@@ -51,11 +51,21 @@ from .common import (MPIFileTypeError, MPIFileView, decompose_shape,
 def _validate_subdomain(
         comm, subdomain_locations: Sequence[int],
         nb_subdomain_grid_pts: Sequence[int],
-        nb_grid_pts: Sequence[int]):
+        nb_grid_pts: Sequence[int], check_tiling: bool = True):
     """
-    Check that the local subdomain fits inside the global grid and that the
-    subdomains across all MPI ranks tile the global grid exactly (no gaps,
-    no overlaps).
+    Check that the local subdomain fits inside the global grid (non-negative
+    location, not extending beyond the grid).
+
+    When ``check_tiling`` is true (the default, used on write), additionally
+    check that the subdomains across all MPI ranks tile the global grid
+    exactly: their total size must equal the global grid size. This is
+    required on write, where gaps or overlaps would corrupt the output file.
+
+    On read it is set false: reading a sub-region of a stored array is a
+    legitimate operation, and neither gaps (each rank reads its own window)
+    nor overlaps (reads are non-destructive) are correctness errors -- only
+    the per-rank bounds matter. ``check_tiling`` performs a collective
+    reduction, so it must be passed identically on every rank.
     """
     subdomain_locations_arr = np.asarray(subdomain_locations, dtype=np.int64)
     nb_subdomain_grid_pts_arr = np.asarray(nb_subdomain_grid_pts, dtype=np.int64)
@@ -72,6 +82,9 @@ def _validate_subdomain(
             f"size={tuple(nb_subdomain_grid_pts)}) extends beyond the global "
             f"grid {tuple(nb_grid_pts)}"
         )
+
+    if not check_tiling:
+        return
 
     local_nb_pts = np.array(
         int(np.multiply.reduce(nb_subdomain_grid_pts_arr, dtype=np.int64)),
@@ -209,7 +222,10 @@ class NPYFile(MPIFileView):
         # Check value compatibility
         assert len(nb_subdomain_grid_pts) == spatial_ndim
 
-        _validate_subdomain(self.comm, subdomain_locations, nb_subdomain_grid_pts, nb_grid_pts)
+        # check_tiling=False: a partial (sub-region) read is legitimate, so we
+        # only enforce per-rank bounds, not that the subdomains tile the grid.
+        _validate_subdomain(self.comm, subdomain_locations, nb_subdomain_grid_pts, nb_grid_pts,
+                            check_tiling=False)
 
         buf_shape = recover_shape(nb_subdomain_grid_pts, nb_components, components_are_leading)
         data = np.empty(buf_shape, dtype=self.dtype, order='F' if self.fortran_order else 'C')

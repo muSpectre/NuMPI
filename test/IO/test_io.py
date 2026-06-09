@@ -436,31 +436,52 @@ def test_load_subdomain_out_of_bounds(comm_self, npyfile):
         )
 
 
-def test_load_subdomain_does_not_tile_grid(comm_self, npyfile):
-    np.save(npyfile, np.zeros(10))
-    with pytest.raises(ValueError, match="tile"):
-        load_npy(
-            npyfile,
-            subdomain_locations=(0,), nb_subdomain_grid_pts=(5,),
-            comm=comm_self,
-        )
+def test_load_partial_subdomain(comm_self, npyfile):
+    """
+    Reading a sub-region that does not cover the whole stored array is a
+    legitimate operation and must succeed (regression test for #85). Unlike
+    writing, reads do not require the subdomains to tile the grid.
+    """
+    np.save(npyfile, np.arange(10.0))
+    # First five elements.
+    head = load_npy(
+        npyfile, subdomain_locations=(0,), nb_subdomain_grid_pts=(5,),
+        comm=comm_self,
+    )
+    np.testing.assert_array_equal(head, np.arange(5.0))
+    # An interior window.
+    mid = load_npy(
+        npyfile, subdomain_locations=(3,), nb_subdomain_grid_pts=(4,),
+        comm=comm_self,
+    )
+    np.testing.assert_array_equal(mid, np.arange(3.0, 7.0))
+
+    # Out-of-bounds and negative locations are still rejected.
+    with pytest.raises(ValueError, match="beyond the global grid"):
+        load_npy(npyfile, subdomain_locations=(8,), nb_subdomain_grid_pts=(5,),
+                 comm=comm_self)
 
 
-def test_load_subdomain_does_not_tile_grid_parallel(comm):
-    """Each rank claims a too-small subdomain so the total doesn't cover the global grid."""
+def test_load_partial_subdomain_parallel(comm):
+    """
+    Each rank reads a single, distinct point of a larger stored array. The
+    subdomains intentionally do NOT tile the grid (only the first `size`
+    points are read), which must be allowed on read (regression test for #85).
+    """
     if comm.size == 1:
         pytest.skip("requires more than one process")
-    fn = "bad_load_tile_parallel.npy"
+    fn = "partial_load_parallel.npy"
     if comm.rank == 0:
-        np.save(fn, np.zeros(100))
+        np.save(fn, np.arange(100.0))
     comm.barrier()
     try:
-        with pytest.raises(ValueError, match="tile"):
-            load_npy(
-                fn,
-                subdomain_locations=(comm.rank,), nb_subdomain_grid_pts=(1,),
-                comm=comm,
-            )
+        local = load_npy(
+            fn,
+            subdomain_locations=(comm.rank,), nb_subdomain_grid_pts=(1,),
+            comm=comm,
+        )
+        # Rank r owns global index r, whose stored value is r.
+        np.testing.assert_array_equal(local, np.array([float(comm.rank)]))
     finally:
         comm.barrier()
         if comm.rank == 0:

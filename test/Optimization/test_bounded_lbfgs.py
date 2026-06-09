@@ -5,6 +5,7 @@
 #
 
 import numpy as np
+import pytest
 
 from NuMPI.Optimization import l_bfgs_bounded
 from NuMPI.Testing.Assertions import assert_all_allclose, parallel_assert
@@ -19,6 +20,15 @@ from NuMPI.Tools import Reduction
 def _quad(y):
     def fun_grad(x):
         return 0.5 * float(np.sum((x - y) ** 2)), (x - y)
+
+    return fun_grad
+
+
+def _quad_weighted(y, w):
+    """Ill-conditioned quadratic 0.5 * sum(w_i (x_i - y_i)^2)."""
+    def fun_grad(x):
+        d = x - y
+        return 0.5 * float(np.sum(w * d * d)), w * d
 
     return fun_grad
 
@@ -268,3 +278,150 @@ def test_mpi_matches_serial(comm):
 
     x_serial_local = _distribute(res_serial.x, comm)
     assert_all_allclose(comm, res_par.x, x_serial_local, atol=1e-8)
+
+
+# ----------------------------------------------------------------------------
+# Termination criteria, fallback paths, diagnostics and input guards.
+# ----------------------------------------------------------------------------
+
+
+def test_already_converged_at_start():
+    """
+    If the starting iterate already satisfies the gradient tolerance, the
+    solver returns immediately (before entering the iteration loop).
+    """
+    rng = np.random.default_rng(9)
+    N = 32
+    y = rng.normal(size=N)
+
+    # x0 == y is the exact (unconstrained) minimiser, so the residual is zero.
+    res = l_bfgs_bounded(_quad(y), y.copy(), jac=True, gtol=1e-8)
+    assert res.success, res.message
+    assert res.nit == 0
+    assert res.message == "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL"
+
+
+def test_ftol_convergence():
+    """gtol disabled: terminate via the relative function-reduction (ftol)."""
+    rng = np.random.default_rng(10)
+    N = 64
+    y = rng.normal(size=N)
+
+    res = l_bfgs_bounded(
+        _quad(y), np.zeros(N), jac=True,
+        gtol=0, ftol=1e-8, xtol=0,
+    )
+    assert res.success, res.message
+    assert res.message == "CONVERGENCE: REL_REDUCTION_OF_F_<=_FTOL"
+
+
+def test_xtol_convergence():
+    """gtol and ftol disabled: terminate via the step-size (xtol) criterion."""
+    rng = np.random.default_rng(11)
+    N = 64
+    y = rng.normal(size=N)
+
+    res = l_bfgs_bounded(
+        _quad(y), np.zeros(N), jac=True,
+        gtol=0, ftol=0, xtol=1e-8,
+    )
+    assert res.success, res.message
+    assert res.message == "CONVERGENCE: NORM_OF_VARIABLE_STEP_<=_XTOL"
+
+
+def test_maxiter_not_converged():
+    """
+    All tolerances disabled with a single allowed iteration: the optimizer
+    must report failure with the max-iterations message.
+    """
+    rng = np.random.default_rng(12)
+    N = 64
+    y = rng.normal(size=N)
+
+    res = l_bfgs_bounded(
+        _quad(y), np.zeros(N), jac=True,
+        gtol=0, ftol=0, xtol=0, maxiter=1,
+    )
+    assert not res.success
+    assert res.message == "NO CONVERGENCE: MAXITERATIONS REACHED"
+
+
+def test_linesearch_failure_returns_unsuccessful():
+    """
+    ``max_halvings=0`` makes every projected Armijo search fail immediately,
+    so both the L-BFGS step and the steepest-descent fallback bail out and
+    the solver returns ``success == False``.
+    """
+    rng = np.random.default_rng(13)
+    N = 32
+    y = rng.normal(size=N)
+
+    res = l_bfgs_bounded(
+        _quad(y), np.zeros(N), jac=True,
+        gtol=1e-10, max_halvings=0,
+    )
+    assert not res.success
+    assert res.message == "CONVERGENCE: line-search did not converge"
+
+
+def test_maxcor_history_eviction():
+    """
+    An ill-conditioned quadratic needs more iterations than ``maxcor``, so the
+    L-BFGS history fills and the oldest (s, y) pair is evicted. The solve must
+    still converge to the analytic minimum.
+    """
+    N = 40
+    rng = np.random.default_rng(14)
+    y = rng.normal(size=N)
+    w = np.logspace(0, 3, N)  # condition number ~1e3
+
+    res = l_bfgs_bounded(
+        _quad_weighted(y, w), np.zeros(N), jac=True,
+        maxcor=2, gtol=1e-8, maxiter=500,
+    )
+    assert res.success, res.message
+    # More iterations than maxcor guarantees the eviction branch ran.
+    assert res.nit > 2
+    np.testing.assert_allclose(res.x, y, atol=1e-6)
+
+
+def test_disp_prints_progress(capsys):
+    """disp=True prints an iteration table to stdout."""
+    rng = np.random.default_rng(15)
+    N = 16
+    y = rng.normal(size=N)
+
+    res = l_bfgs_bounded(_quad(y), np.zeros(N), jac=True, gtol=1e-10, disp=True)
+    assert res.success, res.message
+    assert capsys.readouterr().out != ""
+
+
+def test_callback_invoked():
+    """callback fires at least once with the current (local) iterate."""
+    rng = np.random.default_rng(16)
+    N = 16
+    y = rng.normal(size=N)
+
+    seen = []
+    res = l_bfgs_bounded(
+        _quad(y), np.zeros(N), jac=True, gtol=1e-10,
+        callback=lambda x: seen.append(np.asarray(x).copy()),
+    )
+    assert res.success, res.message
+    assert len(seen) >= 1
+    assert seen[-1].shape == (N,)
+
+
+def test_jac_false_not_implemented():
+    """Numerical (finite-difference) gradients are not implemented."""
+    y = np.zeros(8)
+    with pytest.raises(NotImplementedError):
+        l_bfgs_bounded(_quad(y), np.zeros(8), jac=False)
+
+
+def test_rejects_comm_and_pnp(comm):
+    """Supplying both comm and pnp is ambiguous and must raise."""
+    y = np.zeros(8)
+    with pytest.raises(RuntimeError):
+        l_bfgs_bounded(_quad(y), np.zeros(8), jac=True,
+                       comm=comm, pnp=Reduction(comm))
