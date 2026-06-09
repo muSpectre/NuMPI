@@ -128,7 +128,8 @@ def l_bfgs(
     x_old=None,
     maxcor=10,
     gtol=1e-5,
-    ftol=2.2e-9,
+    ftol=0.0,
+    xtol=0.0,
     maxiter=15000,
     maxls=20,
     linesearch_options=dict(c1=1e-3, c2=0.9),
@@ -359,42 +360,58 @@ def l_bfgs(
                     f"{iteration:<10} {phi:<10.7g} {phi_change:<10.7g} {max_grad:<10.7g} {norm_grad:<10.7g}"
                 )
 
-        if max_grad < gtol:
-            _log.info("CONVERGED because gradient tolerance was reached")
-            result = OptimizeResult(
-                {
-                    "success": True,
-                    "x": x.reshape(original_shape),
-                    "fun": phi,
-                    "jac": grad.reshape(original_shape),
-                    "nit": iteration,
-                    "message": "CONVERGENCE: " "NORM_OF_GRADIENT_<=_GTOL",
-                    "iterates": iterates,
-                    "max_grad": max_grad,
-                    "norm_grad": norm_grad,
-                    "phi_change": phi_change,
-                }
-            )
-            return result
+        if gtol > 0:
+            if max_grad < gtol:
+                _log.info("CONVERGED because gradient tolerance was reached")
+                result = OptimizeResult(
+                    {
+                        "success": True,
+                        "x": x.reshape(original_shape),
+                        "fun": phi,
+                        "jac": grad.reshape(original_shape),
+                        "nit": iteration,
+                        "message": "CONVERGENCE: " "NORM_OF_GRADIENT_<=_GTOL",
+                        "iterates": iterates,
+                        "max_grad": max_grad,
+                        "norm_grad": norm_grad,
+                        "phi_change": phi_change,
+                    }
+                )
+                return result
 
-        if phi_change <= ftol * max((1, abs(phi), abs(phi_old))):
-            _log.info("CONVERGED because function tolerance was reached")
-            result = OptimizeResult(
-                {
-                    "success": True,
-                    "x": x.reshape(original_shape),
-                    "fun": phi,
-                    "jac": grad.reshape(original_shape),
-                    "nit": iteration,
-                    "message": "CONVERGENCE: " "REL_REDUCTION_OF_F_<=_FACTR*EPSMCH",
-                    "iterates": iterates,
-                    "max_grad": max_grad,
-                    "norm_grad": norm_grad,
-                    "phi_change": phi_change,
-                }
-            )
+        if ftol > 0:
+            if abs(phi_change) <= ftol * max((1, abs(phi), abs(phi_old))):
+                _log.info("CONVERGED because function tolerance was reached")
+                result = OptimizeResult(
+                    {
+                        "success": True,
+                        "x": x.reshape(original_shape),
+                        "fun": phi,
+                        "jac": grad.reshape(original_shape),
+                        "nit": iteration,
+                        "message": "CONVERGENCE: " "REL_REDUCTION_OF_F_<=_FTOL",
+                        "iterates": iterates,
+                        "max_grad": max_grad,
+                        "norm_grad": norm_grad,
+                        "phi_change": phi_change,
+                    }
+                )
+                return result
 
-            return result
+        if xtol > 0:
+            if pnp.max(np.abs(x - x_old)) < xtol:
+                _log.info("CONVERGED because x tolerance was reached")
+                result = OptimizeResult(
+                    {
+                        "success": True,
+                        "x": x.reshape(original_shape),
+                        "fun": phi,
+                        "jac": grad.reshape(original_shape),
+                        "nit": iteration,
+                        "message": "CONVERGENCE: " "NORM_OF_VARIABLE_STEP_<=_XTOL",
+                    }
+                )
+                return result
 
         if iteration > maxiter:
             _log.info("CONVERGED because maximum number of iterations reached")

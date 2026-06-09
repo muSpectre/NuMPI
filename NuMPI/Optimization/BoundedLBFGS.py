@@ -65,6 +65,8 @@ def l_bfgs_bounded(
     bounds_hi=None,
     zero_mask=None,
     gtol=1e-5,
+    ftol=0.0,
+    xtol=0.0,
     maxiter=500,
     maxcor=10,
     c1=1e-4,
@@ -251,6 +253,30 @@ def l_bfgs_bounded(
                 s_hist.pop()
                 y_hist.pop()
                 rho_hist.pop()
+
+        if xtol > 0:
+            if pnp.max(np.abs(x_new - x)) < xtol:
+                return _result(
+                    True,
+                    x,
+                    phi,
+                    grad,
+                    iteration,
+                    r_norm,
+                    "CONVERGENCE: NORM_OF_VARIABLE_STEP_<=_XTOL",
+                )
+
+        if ftol > 0:
+            if abs(phi_new - phi) < ftol * max(1, abs(phi_new), abs(phi)):
+                return _result(
+                    True,
+                    x,
+                    phi,
+                    grad,
+                    iteration,
+                    r_norm,
+                    "CONVERGENCE: REL_REDUCTION_OF_F_<=_FTOL",
+                )
 
         x, phi, grad, r_free = x_new, phi_new, grad_new, r_free_new
         r_norm = pnp.max(np.abs(r_free))

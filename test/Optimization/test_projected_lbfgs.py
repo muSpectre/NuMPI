@@ -148,7 +148,7 @@ def test_initial_guess_outside_feasible_set_is_projected():
 
     x_true = c.project(y, lo=-2.0, hi=2.0)
     res = l_bfgs_projected(
-        _quad(y), x0, c, jac=True, bounds_lo=-2.0, bounds_hi=2.0, gtol=1e-10
+        _quad(y), x0, c, jac=True, bounds_lo=-2.0, bounds_hi=2.0, gtol=1e-10, ftol=0
     )
 
     assert res.success, res.message
