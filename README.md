@@ -39,25 +39,25 @@ Testing
 
 You have to do a development installation to be able to run the tests.
 
-We use [runtests](https://github.com/bccp/runtests). 
+From the main installation directory, run the test suite with pytest:
 
-From the main installation directory:
 ```bash
-python run-tests.py
+python -m pytest
 ```
 
-If you want to use NuMPI without mpi4py, you can simply run the tests with pytest. 
+This runs serially and exercises the MPI stub implementation, so it works
+without `mpi4py` installed. To run a single test file or test:
 
 ```bash
-pytest tests/
+python -m pytest test/Optimization/test_cg.py
+python -m pytest test/Optimization/test_cg.py::test_directions -s
 ```
 
-Testing on the cluster
-----------------------
-On NEMO for example
+To run the suite under real MPI at a given number of ranks (this is what CI
+does, for 1, 2, 4, 8 and 10 ranks):
 
 ```bash
-msub -q express -l walltime=15:00,nodes=1:ppn=20 NEMO_test_job.sh -m bea
+mpirun --oversubscribe -n 4 python -m pytest --verbose
 ```
 
 MPI Conventions
