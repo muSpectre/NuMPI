@@ -37,6 +37,20 @@ test = [
 repository = "https://github.com/IMTEK-Simulation/NuMPI"
 changelog = "https://github.com/IMTEK-Simulation/NuMPI/blob/master/ChangeLog.md"
 
+[tool.coverage.run]
+source = ["NuMPI"]
+# parallel mode writes a uniquely-named data file per process, so coverage
+# from every MPI rank (and every `mpirun -n N` invocation) is preserved and
+# merged with `coverage combine` rather than clobbered.
+parallel = true
+omit = ["NuMPI/_version.py"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
 [tool.hatch.version]
 source = "vcs"
 

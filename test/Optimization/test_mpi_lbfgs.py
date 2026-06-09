@@ -120,17 +120,82 @@ def test_rosenbrock_analytical_min(comm, n):
     assert np.abs(res.fun - Objective.minVal(n)) < 1e-7
 
 
-# def test_ftol(comm):
-#    pass
+def test_ftol_convergence(comm):
+    """
+    With ``gtol`` disabled the run must terminate via the function-value
+    (``ftol``) criterion and report the matching message.
+    """
+    PObjective = MPI_Quadratic(nb_domain_grid_pts=20, pnp=Reduction(comm))
+    res = l_bfgs(
+        PObjective.f_grad, PObjective.startpoint(), args=(2,), jac=True,
+        gtol=0, ftol=1e-8, xtol=0, maxiter=1000, comm=comm)
+    assert res.success
+    assert res.message == "CONVERGENCE: REL_REDUCTION_OF_F_<=_FTOL"
 
-# def test_gtol(comm):
-#    pass
 
-# def test_g2tol(comm):
-#    pass
+def test_xtol_convergence(comm):
+    """
+    With ``gtol`` and ``ftol`` disabled the run must terminate via the
+    step-size (``xtol``) criterion.
+    """
+    PObjective = MPI_Quadratic(nb_domain_grid_pts=20, pnp=Reduction(comm))
+    res = l_bfgs(
+        PObjective.f_grad, PObjective.startpoint(), args=(2,), jac=True,
+        gtol=0, ftol=0, xtol=1e-8, maxiter=1000, comm=comm)
+    assert res.success
+    assert res.message == "CONVERGENCE: NORM_OF_VARIABLE_STEP_<=_XTOL"
 
-# def test_alltol(comm):
-#    pass
+
+def test_maxiter_not_converged(comm):
+    """
+    All tolerances effectively disabled with too few iterations: the
+    optimizer must give up and report ``success == False``.
+    """
+    PObjective = MPI_Objective_Interface(
+        mp.Extended_Rosenbrock, nb_domain_grid_pts=20, comm=comm)
+    res = l_bfgs(
+        PObjective.f_grad, PObjective.startpoint(), args=(2,), jac=True,
+        gtol=1e-30, ftol=0, xtol=0, maxiter=2, comm=comm)
+    assert not res.success
+
+
+def test_disp_and_callback(comm, capsys):
+    """
+    ``disp`` prints a progress table (rank 0 only); ``callback`` fires at
+    least once during the iteration.
+    """
+    PObjective = MPI_Quadratic(nb_domain_grid_pts=20, pnp=Reduction(comm))
+    seen = []
+    res = l_bfgs(
+        PObjective.f_grad, PObjective.startpoint(), args=(2,), jac=True,
+        gtol=1e-10, comm=comm, disp=1, store_iterates=True,
+        callback=lambda x: seen.append(1))
+    assert res.success
+    assert len(seen) >= 1
+    # store_iterates=True records one OptimizeResult per iteration.
+    assert len(res.iterates) >= 1
+    captured = capsys.readouterr()
+    if comm.rank == 0:
+        assert captured.out != ""
+    else:
+        assert captured.out == ""
+
+
+def test_rejects_comm_and_pnp(comm):
+    """Supplying both ``comm`` and ``pnp`` is ambiguous and must raise."""
+    PObjective = MPI_Quadratic(nb_domain_grid_pts=10, pnp=Reduction(comm))
+    with pytest.raises(RuntimeError):
+        l_bfgs(PObjective.f_grad, PObjective.startpoint(), args=(2,),
+               jac=True, comm=comm, pnp=Reduction(comm))
+
+
+def test_jac_false_not_implemented(comm):
+    """Numerical (finite-difference) gradients are not implemented."""
+    PObjective = MPI_Quadratic(nb_domain_grid_pts=10, pnp=Reduction(comm))
+    with pytest.raises(NotImplementedError):
+        l_bfgs(PObjective.f_grad, PObjective.startpoint(), args=(2,),
+               jac=False, comm=comm)
+
 
 @pytest.mark.skip(reason="just plotting")
 def test_time_complexity(comm):

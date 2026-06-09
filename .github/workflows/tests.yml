@@ -68,8 +68,21 @@ jobs:
           if [ "${{ matrix.mpi }}" == "yes" ]; then
             for nbprocs in 1 2 4 8 10; do
               echo "=== $nbprocs MPI processes ==="
-              mpirun --oversubscribe -n $nbprocs python3 -m pytest --verbose --full-trace
+              # `coverage run` (parallel mode, set in pyproject.toml) writes a
+              # separate data file per rank; they are merged below.
+              mpirun --oversubscribe -n $nbprocs coverage run -m pytest --verbose --full-trace
             done
           else
-            python3 -m pytest --verbose --full-trace -s
+            coverage run -m pytest --verbose --full-trace -s
           fi
+          coverage combine
+          coverage xml
+          coverage report
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: mpi-${{ matrix.mpi }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
