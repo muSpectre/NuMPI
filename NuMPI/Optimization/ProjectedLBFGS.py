@@ -105,7 +105,7 @@ def l_bfgs_projected(
     bounds_hi=None,
     zero_mask=None,
     gtol=1e-5,
-    ftol=2.2e-9,
+    ftol=0.0,
     xtol=0.0,
     maxiter=500,
     maxcor=10,

@@ -128,7 +128,7 @@ def l_bfgs(
     x_old=None,
     maxcor=10,
     gtol=1e-5,
-    ftol=2.2e-9,
+    ftol=0.0,
     xtol=0.0,
     maxiter=15000,
     maxls=20,
