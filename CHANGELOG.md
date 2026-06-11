@@ -1,6 +1,13 @@
 Change log for NuMPI
 ===================
 
+v0.13.0 (11Jun26)
+-----------------
+
+- ENH: Added the pickle-based (lowercase) object communication methods
+  `gather`, `allgather`, `bcast`, `scatter`, `reduce` and `allreduce` to the
+  MPI stub's `Intracomm`
+
 v0.12.0 (09Jun26)
 -----------------
 

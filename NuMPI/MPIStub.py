@@ -33,10 +33,10 @@ implement it and submit it back to us.
 """
 
 from enum import Enum
-from typing import Sequence, Optional
+from io import TextIOBase
+from typing import Optional, Sequence
 
 import numpy as np
-from io import TextIOBase
 
 
 # ## Layout
@@ -380,6 +380,37 @@ class Intracomm(object):
         recvdata[...] = senddata
 
     Allreduce = Reduce
+
+    # Lowercase variants of the communication methods operate on arbitrary
+    # Python objects (mpi4py communicates them in pickled form). With a
+    # single process they reduce to trivial operations.
+
+    def gather(self, sendobj, root=0):
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+        return [sendobj]
+
+    def allgather(self, sendobj):
+        return [sendobj]
+
+    def bcast(self, obj, root=0):
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+        return obj
+
+    def scatter(self, sendobj, root=0):
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+        (obj,) = sendobj
+        return obj
+
+    def reduce(self, sendobj, op=Operations.SUM, root=0):
+        if root != 0:
+            raise ValueError("Root must be zero for MPI stub implementation.")
+        return sendobj
+
+    def allreduce(self, sendobj, op=Operations.SUM):
+        return sendobj
 
     def Allgather(self, sendbuf, recvbuf_counts):
         try:
