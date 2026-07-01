@@ -58,6 +58,7 @@ class ObjectiveFunction(object, metaclass=abc.ABCMeta):
     @classmethod
     def plot_2D(cls):
         import matplotlib.pyplot as plt
+
         from helpers.plot_helpers import draw_npArrow2D
         fun = cls.f
 
@@ -130,6 +131,7 @@ class Trigonometric(ObjectiveFunction):
     @staticmethod
     def plot_2D():
         import matplotlib.pyplot as plt
+
         from helpers.plot_helpers import draw_npArrow2D
         fun = Trigonometric.f
 
@@ -202,7 +204,7 @@ class Extended_Rosenbrock(ObjectiveFunction):
         :return: array of shape (1,n)
         """
         x0 = np.zeros(n, dtype=float)
-        x0.shape = (-1, 1)
+        x0 = x0.reshape(-1, 1)
         x0[:-1:2] = -1.2
         x0[1::2] = 1
 

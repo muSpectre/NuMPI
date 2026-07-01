@@ -99,7 +99,7 @@ class MPI_Extended_Rosenbrock():  # TODO: This doesn't work
         :return: array of shape (1,n)
         """
         x0 = np.zeros(self.nb_subdomain_grid_pts, dtype=float)
-        x0.shape = (-1, 1)
+        x0 = x0.reshape(-1, 1)
 
         x0[self._sl_even] = -1.2
         x0[self._sl_odd] = 1

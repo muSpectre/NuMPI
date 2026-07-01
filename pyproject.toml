@@ -27,10 +27,8 @@ mpi = [
     "mpi4py"
 ]
 test = [
-    "flake8<5",
     "pytest",
     "pytest-cov",
-    "pytest-flake8",
 ]
 
 [project.urls]

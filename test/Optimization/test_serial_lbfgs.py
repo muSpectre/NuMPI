@@ -42,14 +42,12 @@ if _scipy_present:
     except ModuleNotFoundError:
         from scipy.optimize.linesearch import scalar_search_wolfe2
 
+import test.Optimization.MinimizationProblems as mp
+
 from NuMPI import MPI
 from NuMPI.Optimization import l_bfgs
-from NuMPI.Optimization.Wolfe import (
-    second_wolfe_condition,
-    first_wolfe_condition
-)
-
-import test.Optimization.MinimizationProblems as mp
+from NuMPI.Optimization.Wolfe import (first_wolfe_condition,
+                                      second_wolfe_condition)
 
 pytestmark = pytest.mark.skipif(
     MPI.COMM_WORLD.Get_size() > 1,
@@ -140,7 +138,7 @@ def test_3D():
 
     # Initial history:
     x_old = np.array([2., 1., -1.], dtype=float)
-    x_old.shape = (-1, 1)
+    x_old = x_old.reshape(-1, 1)
     # x_old.shape=(-1,1)
     grad_old = ex_jac(x_old)
 
@@ -208,7 +206,7 @@ def test_quadratic_nD():
 
     # Initial history:
     x_old = np.random.random(n)
-    x_old.shape = (-1, 1)
+    x_old = x_old.reshape(-1, 1)
     # x_old.shape=(-1,1)
     grad_old = ex_jac(x_old)
 
@@ -253,7 +251,7 @@ def test_quadratic_nD():
 def test_gaussian_nD(n):
     factors = np.random.random(n) + 0.5
     shift = (np.random.random(n) - 0.5) * 0.1
-    shift.shape = (-1, 1)
+    shift = shift.reshape(-1, 1)
 
     def ex_fun(x):
         "x should be an np array"
@@ -268,7 +266,7 @@ def test_gaussian_nD(n):
 
     # Initial history:
     x = np.random.random(n) - 0.5
-    x.shape = (-1, 1)
+    x = x.reshape(-1, 1)
 
     # resscipy = scipy.optimize.minimize(ex_fun, x, jac=ex_jac)
     # my_print("schipy success: {}".format(resscipy.success))
