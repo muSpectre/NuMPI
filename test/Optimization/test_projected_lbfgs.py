@@ -349,3 +349,66 @@ def test_mpi_matches_serial(comm):
     # Compare distributed result to the serial reference's local slice.
     x_serial_local = _distribute(res_serial.x, comm)
     assert_all_allclose(comm, res_par.x, x_serial_local, atol=1e-7)
+
+
+# ----------------------------------------------------------------------------
+# Multi-dimensional (n-D) x0: the design variable may be a grid (e.g. a 2D/3D
+# density field). The iterate, gradient and L-BFGS history must stay in a
+# consistent shape; the constraint vector ``a`` and the result stay flat / are
+# returned in the original shape respectively.
+# ----------------------------------------------------------------------------
+
+
+def _quad_weighted(y, w):
+    """Ill-conditioned quadratic 0.5 * sum(w_i (x_i - y_i)^2), forcing several
+    L-BFGS iterations so the two-loop recursion consumes the (s, y) history."""
+    def fun_grad(x):
+        d = x - y
+        return 0.5 * float(np.sum(w * d * d)), w * d
+
+    return fun_grad
+
+
+def test_nd_x0_matches_flattened_run():
+    """An n-D run must be identical to the same problem flattened to 1D."""
+    rng = np.random.default_rng(20)
+    shape = (5, 7)
+    N = int(np.prod(shape))
+    y = rng.normal(size=shape)
+    w = np.exp(rng.uniform(-2.0, 2.0, size=shape))
+    a = np.abs(rng.normal(size=N)) + 0.1  # constraint vector is flat (length N)
+    V = 1.3
+    lo, hi = -0.5, 0.5
+
+    kw = dict(jac=True, gtol=1e-10, maxiter=500, max_halvings=60,
+              bounds_lo=lo, bounds_hi=hi)
+    res_nd = l_bfgs_projected(
+        _quad_weighted(y, w), np.zeros(shape), LinearConstraint(a, V), **kw
+    )
+    res_flat = l_bfgs_projected(
+        _quad_weighted(y.ravel(), w.ravel()), np.zeros(N),
+        LinearConstraint(a, V), **kw,
+    )
+
+    assert res_nd.x.shape == shape
+    np.testing.assert_allclose(res_nd.x.ravel(), res_flat.x, atol=1e-9)
+    assert abs(np.dot(a, res_nd.x.ravel()) - V) < 1e-8
+    assert res_nd.nit >= 2  # history was built and used
+
+
+def test_nd_x0_callback_receives_original_shape():
+    """The callback must see the iterate in the user's original n-D shape."""
+    rng = np.random.default_rng(21)
+    shape = (6, 4)
+    N = int(np.prod(shape))
+    y = rng.normal(size=shape)
+    w = np.exp(rng.uniform(-2.0, 2.0, size=shape))
+    a = np.ones(N) / N
+    seen = []
+    res = l_bfgs_projected(
+        _quad_weighted(y, w), np.zeros(shape), LinearConstraint(a, 0.2),
+        jac=True, gtol=1e-9, maxiter=500,
+        callback=lambda x: seen.append(np.asarray(x).shape),
+    )
+    assert res.success, res.message
+    assert seen and all(s == shape for s in seen)

@@ -135,23 +135,36 @@ def l_bfgs_bounded(
     elif pnp is None:
         pnp = np
 
+    original_shape = np.asarray(x0).shape
+
+    # Work internally on the flattened (1D) iterate so that the iterate, the
+    # gradient and the L-BFGS (s, y) history all share a single shape; the
+    # two-loop recursion then never mixes raveled and n-D arrays. The user's
+    # ``fun``/``jac`` and ``callback`` still see the original n-D shape, and the
+    # result is reshaped back to it. ``x``, the gradient, the bounds and the
+    # zero mask are all handled per-rank; flattening is purely local.
+    def _flat(a):
+        return a if (a is None or np.isscalar(a)) else np.asarray(a).ravel()
+
+    bounds_lo = _flat(bounds_lo)
+    bounds_hi = _flat(bounds_hi)
+    zero_mask = (
+        None if zero_mask is None else np.asarray(zero_mask).ravel().astype(bool)
+    )
+
     if jac is True or jac is None:
 
         def fun_grad(x):
-            return fun(x, *args)
+            phi, g = fun(x.reshape(original_shape), *args)
+            return phi, np.asarray(g).ravel()
 
     elif jac is False:
         raise NotImplementedError("Numerical evaluation of gradient not implemented")
     else:
 
         def fun_grad(x):
-            return fun(x, *args), jac(x, *args)
-
-    original_shape = np.asarray(x0).shape
-
-    zero_mask_flat = (
-        None if zero_mask is None else np.asarray(zero_mask).ravel().astype(bool)
-    )
+            xr = x.reshape(original_shape)
+            return fun(xr, *args), np.asarray(jac(xr, *args)).ravel()
 
     def project(y):
         if bounds_lo is None and bounds_hi is None:
@@ -159,15 +172,22 @@ def l_bfgs_bounded(
         else:
             z = np.clip(y, bounds_lo, bounds_hi)
         if zero_mask is not None:
-            z = np.where(np.asarray(zero_mask), 0.0, z)
+            z = np.where(zero_mask, 0.0, z)
         return z
 
+    def _finish(success, x, phi, grad, nit, residual, message):
+        # Return the iterate and gradient in the caller's original shape.
+        return _result(
+            success, np.asarray(x).reshape(original_shape), phi,
+            np.asarray(grad).reshape(original_shape), nit, residual, message,
+        )
+
     # --- Feasible starting iterate --------------------------------------
-    x = project(np.asarray(x0, dtype=float))
+    x = project(np.asarray(x0, dtype=float).ravel())
     phi, grad = fun_grad(x)
 
     r_free = _kkt_residual(
-        np.asarray(grad), x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
+        grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
     )
     r_norm = pnp.max(np.abs(r_free))
 
@@ -184,17 +204,16 @@ def l_bfgs_bounded(
         print(f"{0:<5d} {phi:<14.6e} {r_norm:<14.4e} {'-':<8}")
 
     if r_norm < gtol:
-        return _result(
+        return _finish(
             True, x, phi, grad, 0, r_norm,
             "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
         )
 
     for iteration in range(1, maxiter + 1):
-        # L-BFGS search direction from the KKT-masked gradient.
-        d = _twoloop_direction(r_free.ravel(), s_hist, y_hist, rho_hist, pnp)
-        if zero_mask_flat is not None:
-            d = np.where(zero_mask_flat, 0.0, d)
-        d = d.reshape(original_shape)
+        # L-BFGS search direction from the KKT-masked gradient (all 1D).
+        d = _twoloop_direction(r_free, s_hist, y_hist, rho_hist, pnp)
+        if zero_mask is not None:
+            d = np.where(zero_mask, 0.0, d)
 
         gd = pnp.sum(r_free * d)
         if gd >= 0.0:
@@ -226,7 +245,7 @@ def l_bfgs_bounded(
             )
         if step is None:
             _log.info("line-search did not converge")
-            return _result(
+            return _finish(
                 False, x, phi, grad, iteration, r_norm,
                 "CONVERGENCE: line-search did not converge",
             )
@@ -256,7 +275,7 @@ def l_bfgs_bounded(
 
         if xtol > 0:
             if pnp.max(np.abs(x_new - x)) < xtol:
-                return _result(
+                return _finish(
                     True,
                     x,
                     phi,
@@ -268,7 +287,7 @@ def l_bfgs_bounded(
 
         if ftol > 0:
             if abs(phi_new - phi) < ftol * max(1, abs(phi_new), abs(phi)):
-                return _result(
+                return _finish(
                     True,
                     x,
                     phi,
@@ -285,15 +304,15 @@ def l_bfgs_bounded(
             print(f"{iteration:<5d} {phi:<14.6e} {r_norm:<14.4e} {alpha:<8.2e}")
 
         if callback is not None:
-            callback(x)
+            callback(x.reshape(original_shape))
 
         if r_norm < gtol:
-            return _result(
+            return _finish(
                 True, x, phi, grad, iteration, r_norm,
                 "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
             )
 
-    return _result(
+    return _finish(
         False, x, phi, grad, maxiter, r_norm,
         "NO CONVERGENCE: MAXITERATIONS REACHED",
     )

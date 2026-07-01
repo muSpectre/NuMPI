@@ -184,18 +184,6 @@ def l_bfgs_projected(
     elif pnp is None:
         pnp = np
 
-    if jac is True or jac is None:
-
-        def fun_grad(x):
-            return fun(x, *args)
-
-    elif jac is False:
-        raise NotImplementedError("Numerical evaluation of gradient not implemented")
-    else:
-
-        def fun_grad(x):
-            return fun(x, *args), jac(x, *args)
-
     if linear_constraint is None:
         raise ValueError("l_bfgs_projected requires a LinearConstraint.")
 
@@ -215,13 +203,49 @@ def l_bfgs_projected(
 
     original_shape = np.asarray(x0).shape
 
+    # Work internally on the flattened (1D) iterate so the iterate, the gradient
+    # and the L-BFGS (s, y) history all share one shape; the two-loop recursion
+    # then never mixes raveled and n-D arrays. The constraint vector ``a`` is
+    # already flat; the bounds and zero mask are flattened here. The user's
+    # ``fun``/``jac`` and ``callback`` still see the original n-D shape, and the
+    # result is reshaped back to it.
+    def _flat(a):
+        return a if (a is None or np.isscalar(a)) else np.asarray(a).ravel()
+
+    bounds_lo = _flat(bounds_lo)
+    bounds_hi = _flat(bounds_hi)
+    zero_mask = (
+        None if zero_mask is None else np.asarray(zero_mask).ravel().astype(bool)
+    )
+
+    if jac is True or jac is None:
+
+        def fun_grad(x):
+            phi, g = fun(x.reshape(original_shape), *args)
+            return phi, np.asarray(g).ravel()
+
+    elif jac is False:
+        raise NotImplementedError("Numerical evaluation of gradient not implemented")
+    else:
+
+        def fun_grad(x):
+            xr = x.reshape(original_shape)
+            return fun(xr, *args), np.asarray(jac(xr, *args)).ravel()
+
     def project(y):
         return linear_constraint.project(
             y, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
         )
 
+    def _finish(success, x, phi, grad, lam, nit, residual, message):
+        # Return the iterate and gradient in the caller's original shape.
+        return _result(
+            success, np.asarray(x).reshape(original_shape), phi,
+            np.asarray(grad).reshape(original_shape), lam, nit, residual, message,
+        )
+
     # --- Feasible starting iterate and initial tangent gradient ----------
-    x = project(x0.ravel()).reshape(original_shape)
+    x = project(np.asarray(x0, dtype=float).ravel())
     phi, grad = fun_grad(x)
     Gp, lam = _tangent_gradient(
         grad, x, linear_constraint, bounds_lo, bounds_hi, zero_mask
@@ -243,7 +267,7 @@ def l_bfgs_projected(
         print(f"{0:<5d} {phi:<14.6e} {r_norm:<14.4e} {lam:<14.4e} {'-':<8}")
 
     if r_norm < gtol:
-        return _result(
+        return _finish(
             True,
             x,
             phi,
@@ -257,12 +281,11 @@ def l_bfgs_projected(
     for iteration in range(1, maxiter + 1):
         # L-BFGS search direction from the KKT-masked gradient; re-tangent-
         # project against numerical drift.
-        d = _twoloop_direction(r_free.ravel(), s_hist, y_hist, rho_hist, pnp)
+        d = _twoloop_direction(r_free, s_hist, y_hist, rho_hist, pnp)
         mu = pnp.sum(linear_constraint.a * d) / linear_constraint.aTa
         d = d - mu * linear_constraint.a
         if zero_mask is not None:
-            d = np.where(np.asarray(zero_mask).ravel(), 0.0, d)
-        d = d.reshape(original_shape)
+            d = np.where(zero_mask, 0.0, d)
 
         gd = pnp.sum(r_free * d)
         if gd >= 0.0:
@@ -308,7 +331,7 @@ def l_bfgs_projected(
             )
         if step is None:
             _log.info("line-search did not converge")
-            return _result(
+            return _finish(
                 False,
                 x,
                 phi,
@@ -346,7 +369,7 @@ def l_bfgs_projected(
 
         if xtol > 0:
             if pnp.max(np.abs(x_new - x)) < xtol:
-                return _result(
+                return _finish(
                     True,
                     x,
                     phi,
@@ -359,7 +382,7 @@ def l_bfgs_projected(
 
         if ftol > 0:
             if abs(phi_new - phi) < ftol * max(1, abs(phi_new), abs(phi)):
-                return _result(
+                return _finish(
                     True,
                     x,
                     phi,
@@ -386,10 +409,10 @@ def l_bfgs_projected(
             )
 
         if callback is not None:
-            callback(x)
+            callback(x.reshape(original_shape))
 
         if gtol > 0 and r_norm < gtol:
-            return _result(
+            return _finish(
                 True,
                 x,
                 phi,
@@ -400,7 +423,7 @@ def l_bfgs_projected(
                 "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
             )
 
-    return _result(
+    return _finish(
         False,
         x,
         phi,

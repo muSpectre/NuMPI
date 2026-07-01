@@ -30,6 +30,7 @@ correctly implemented
 
 import numpy as np
 import pytest
+
 from NuMPI import MPI
 
 try:
@@ -66,10 +67,10 @@ def test_directional_derivative(Objective, n):
     for i in range(12):
         x = Objective.bounds[0] + (Objective.bounds[1] - Objective.bounds[
             0]) * np.random.random(n)
-        x.shape = (-1, 1)
+        x = x.reshape(-1, 1)
         u = np.random.normal(size=n)  # Direction
         u /= np.linalg.norm(u, 2)  # normalize
-        u.shape = (-1, 1)
+        u = u.reshape(-1, 1)
 
         # TODO: Don't know which Tolerance to associate with which eps
         epsilons = np.array([1e-3, 1e-5, 1e-6])
