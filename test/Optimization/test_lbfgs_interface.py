@@ -110,10 +110,12 @@ def test_minimize_call_row(pnp, Objectiveclass):
     )
 
 
-@pytest.mark.parametrize("shape", [(10,), (10, 1)])
+@pytest.mark.parametrize("shape", [(10,), (10, 1), (2, 5), (4, 5)])
 def test_shape_unchanged(shape):
     """
-    This test is only serial
+    This test is only serial. Includes genuine multi-axis (n-D) shapes: the
+    unconstrained solver normalises the iterate to a column vector internally,
+    so history and directions stay consistent regardless of x0's shape.
     """
     size = np.prod(shape)
     Objective = mp.Extended_Rosenbrock

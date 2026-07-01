@@ -425,3 +425,92 @@ def test_rejects_comm_and_pnp(comm):
     with pytest.raises(RuntimeError):
         l_bfgs_bounded(_quad(y), np.zeros(8), jac=True,
                        comm=comm, pnp=Reduction(comm))
+
+
+# ----------------------------------------------------------------------------
+# Multi-dimensional (n-D) x0: the design variable may be a grid (e.g. a 2D/3D
+# density field), not a flat vector. The optimiser must keep the iterate, the
+# gradient and the (s, y) history in a consistent shape -- earlier the search
+# direction was raveled while the history stayed n-D, so the two-loop recursion
+# broke as soon as it had a stored pair (second iteration onward).
+# ----------------------------------------------------------------------------
+
+
+def test_nd_x0_ill_conditioned_uses_history():
+    """An ill-conditioned quadratic on a 2D grid forces several iterations, so
+    the two-loop recursion actually consumes the (s, y) history."""
+    rng = np.random.default_rng(8)
+    shape = (6, 6)
+    y = rng.normal(size=shape)
+    w = np.exp(rng.uniform(-3.0, 3.0, size=shape))  # conditioning ~ e^6
+
+    res = l_bfgs_bounded(
+        _quad_weighted(y, w), np.zeros(shape), jac=True,
+        gtol=1e-9, maxiter=500,
+    )
+
+    assert res.success, res.message
+    assert res.x.shape == shape
+    np.testing.assert_allclose(res.x, y, atol=1e-6)
+    assert res.nit >= 2  # history was built and used
+
+
+def test_nd_x0_box_matches_clip():
+    """Box-constrained quadratic on a 3D grid: minimiser is clip(y, lo, hi),
+    returned in the original n-D shape."""
+    rng = np.random.default_rng(9)
+    shape = (4, 4, 4)
+    y = rng.normal(size=shape) * 0.6 + 0.3
+    lo, hi = 0.0, 1.0
+
+    res = l_bfgs_bounded(
+        _quad_weighted(y, np.exp(rng.uniform(-2.0, 2.0, size=shape))),
+        np.full(shape, 0.5), jac=True,
+        bounds_lo=lo, bounds_hi=hi, gtol=1e-10, maxiter=500,
+    )
+
+    assert res.success, res.message
+    assert res.x.shape == shape
+    np.testing.assert_allclose(res.x, np.clip(y, lo, hi), atol=1e-7)
+
+
+def test_nd_x0_matches_flattened_run():
+    """An n-D run must be identical to the same problem flattened to 1D -- the
+    strongest statement that shape handling is internally consistent (including
+    array-valued bounds and a zero mask)."""
+    rng = np.random.default_rng(10)
+    shape = (5, 7)
+    y = rng.normal(size=shape)
+    w = np.exp(rng.uniform(-2.0, 2.0, size=shape))
+    lo = rng.uniform(-1.0, -0.3, size=shape)
+    hi = rng.uniform(0.3, 1.0, size=shape)
+    zero_mask = rng.random(shape) < 0.1
+
+    kw = dict(jac=True, gtol=1e-10, maxiter=500, max_halvings=60)
+    res_nd = l_bfgs_bounded(
+        _quad_weighted(y, w), np.zeros(shape),
+        bounds_lo=lo, bounds_hi=hi, zero_mask=zero_mask, **kw,
+    )
+    res_flat = l_bfgs_bounded(
+        _quad_weighted(y.ravel(), w.ravel()), np.zeros(y.size),
+        bounds_lo=lo.ravel(), bounds_hi=hi.ravel(),
+        zero_mask=zero_mask.ravel(), **kw,
+    )
+
+    assert res_nd.x.shape == shape
+    np.testing.assert_allclose(res_nd.x.ravel(), res_flat.x, atol=1e-9)
+
+
+def test_nd_x0_callback_receives_original_shape():
+    """The callback must see the iterate in the user's original n-D shape."""
+    rng = np.random.default_rng(11)
+    shape = (5, 3)
+    y = rng.normal(size=shape)
+    seen = []
+    res = l_bfgs_bounded(
+        _quad_weighted(y, np.exp(rng.uniform(-2, 2, size=shape))),
+        np.zeros(shape), jac=True, gtol=1e-9, maxiter=500,
+        callback=lambda x: seen.append(np.asarray(x).shape),
+    )
+    assert res.success, res.message
+    assert seen and all(s == shape for s in seen)
