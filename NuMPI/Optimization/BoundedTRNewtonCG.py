@@ -433,11 +433,20 @@ def tr_newton_bounded(
         # Inexact-evaluation control: the evaluation error must stay below a
         # fraction of the predicted reduction, or the acceptance ratio is
         # noise (Conn-Gould-Toint 8.4; Kouri et al. 2013/14). The caller
-        # tightens its inner solves and both points are re-evaluated.
+        # tightens its inner solves and both points are re-evaluated. If a
+        # retry fails to reduce the reported error, the caller has hit its
+        # accuracy floor (e.g. the attainable residual of a single-precision
+        # solve) -- stop retrying and let the rho-test decide with the best
+        # available accuracy.
         if fun_error is not None and request_accuracy is not None:
+            prev_err = None
             for _ in range(max_accuracy_retries):
-                if fun_error() <= eta_f * pred:
+                err = fun_error()
+                if err <= eta_f * pred:
                     break
+                if prev_err is not None and err > 0.9 * prev_err:
+                    break  # no further improvement possible
+                prev_err = err
                 request_accuracy(eta_f * pred)
                 phi, grad = fun_grad(x)
                 phi_try, grad_try = fun_grad(x_try)

@@ -209,6 +209,47 @@ def test_accuracy_hooks_rescue_noisy_objective():
     np.testing.assert_allclose(res.x, x_true, atol=1e-4)
 
 
+def test_accuracy_hooks_stop_retrying_at_floor():
+    """A caller that cannot improve its accuracy (e.g. the attainable
+    residual of a single-precision solve) must not be asked over and over:
+    after one fruitless request per iteration the driver proceeds with the
+    best available accuracy instead of burning max_accuracy_retries
+    re-evaluation rounds."""
+    rng = np.random.default_rng(8)
+    N = 32
+    y = rng.normal(size=N) * 0.3
+
+    state = {"requests": 0, "evals": 0}
+    floor = 1e-3  # irreducible noise level
+
+    def fun_grad(x):
+        state["evals"] += 1
+        d = x - y
+        f = 0.5 * float(np.sum(d * d))
+        return f + floor * np.sin(1e3 * float(np.sum(x))), d
+
+    def hessp(x, v):
+        return v
+
+    def fun_error():
+        return floor  # never improves
+
+    def request_accuracy(target):
+        state["requests"] += 1  # honoured but futile
+
+    res = tr_newton_bounded(
+        fun_grad, np.zeros(N), hessp, jac=True, gtol=1e-6, maxiter=50,
+        delta_max=10.0,
+        fun_error=fun_error, request_accuracy=request_accuracy,
+    )
+
+    # At most one futile request per outer iteration (the stagnation break),
+    # not max_accuracy_retries of them.
+    assert state["requests"] <= res.nit + 1
+    # And the run terminates (converged or not) rather than looping.
+    assert res.nit <= 50
+
+
 def test_callback_and_histories():
     """Callback fires per accepted iterate; diagnostics are recorded."""
     rng = np.random.default_rng(7)
