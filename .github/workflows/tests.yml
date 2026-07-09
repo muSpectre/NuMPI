@@ -10,6 +10,15 @@ on:
     branches:
       - '**'
 
+# A branch with an open PR triggers BOTH a push and a pull_request run of the
+# full 40-job matrix; ~80 concurrent jobs contend for runners and (with the
+# oversubscribed MPI tests below) can push individual jobs past the timeout.
+# Normalize both event types to one group per branch so the newer run cancels
+# the older duplicate.
+concurrency:
+  group: tests-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     runs-on: ubuntu-22.04
@@ -66,6 +75,11 @@ jobs:
         run: |
           source venv/bin/activate
           if [ "${{ matrix.mpi }}" == "yes" ]; then
+            # Up to 10 ranks share the runner's ~2 vCPUs: make blocked ranks
+            # yield the CPU instead of busy-wait spinning, which degrades
+            # superlinearly on noisy/oversubscribed VMs and has pushed jobs
+            # past the timeout.
+            export OMPI_MCA_mpi_yield_when_idle=1
             for nbprocs in 1 2 4 8 10; do
               echo "=== $nbprocs MPI processes ==="
               # `coverage run` (parallel mode, set in pyproject.toml) writes a
