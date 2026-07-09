@@ -36,6 +36,15 @@ Public entry points
                           optional box bounds (uses Armijo backtracking with
                           projection arc). Handles the same feasible set as
                           ``constrained_conjugate_gradients``.
+- ``tr_newton_bounded`` : bound-constrained trust-region Newton-CG
+                          (Steihaug-Toint truncated CG on the free subspace,
+                          matrix-free ``hessp``). Same feasible set and
+                          convergence measure as ``l_bfgs_bounded``. Optional
+                          ``fun_error``/``request_accuracy`` hooks enforce the
+                          inexact-trust-region condition
+                          ``|f_err| <= eta_f * pred`` for objectives evaluated
+                          by truncated inner solves -- robust where a
+                          noise-drowned line search stalls.
 - ``constrained_conjugate_gradients`` : bound-constrained CG (Bugnicourt
                           et al. 2018), optionally with a linear equality
                           via the ``linear_constraint`` kwarg or the legacy
@@ -77,6 +86,7 @@ treatment and a worked example.
 
 
 from .BoundedLBFGS import l_bfgs_bounded  # noqa F401
+from .BoundedTRNewtonCG import tr_newton_bounded  # noqa F401
 from .CCGWithoutRestart import constrained_conjugate_gradients  # noqa F401
 from .CCGWithRestart import \
     constrained_conjugate_gradients_with_restart  # noqa F401
