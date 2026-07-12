@@ -1,10 +1,15 @@
 Change log for NuMPI
 ===================
 
+v0.15.0 (12Jul26)
+-----------------
+
+- ENH: Bound-constrained trust-region Newton-CG
+
 v0.14.0 (01Jul26)
 -----------------
 
-- BUG: L-BFGS support multi-dimensional `x0`
+- API: L-BFGS support for multi-dimensional `x0`
 
 v0.13.0 (11Jun26)
 -----------------
