@@ -489,7 +489,7 @@ class File(object):
             self._view_start = self._file.tell()
         except Exception:
             if not self.already_open:
-                self.close()
+                self.Close()
 
     Read_all = Read
 
