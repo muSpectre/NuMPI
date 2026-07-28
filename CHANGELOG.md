@@ -1,6 +1,12 @@
 Change log for NuMPI
 ===================
 
+
+v0.15.1 (28Jul26)
+-----------------
+
+- BUG: Fix errors while closing file when MPIStub.Read fails.
+
 v0.15.0 (12Jul26)
 -----------------
 
