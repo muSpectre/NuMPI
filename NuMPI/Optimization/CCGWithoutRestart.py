@@ -166,7 +166,7 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
     nb_bounds = comm.sum(np.count_nonzero(mask_bounds))
 
     # --- Normalise the linear-equality constraint --------------------------
-    # Accept either the old `mean_val` convenience kwarg (uniform weights) or
+    # Accept either the `mean_val` convenience kwarg (uniform weights) or
     # a generic LinearConstraint. When set, run the projection / tangent
     # steps in the iteration loop below.
     if mean_val is not None and linear_constraint is not None:

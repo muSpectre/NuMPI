@@ -291,13 +291,14 @@ def test_converges_when_steps_stay_boundary_limited():
     """A run whose every step is trust-region-limited must still stop on the
     gradient tolerance.
 
-    Regression test. The convergence test used to be skipped whenever the
-    previous step had ended on the trust-region boundary, on the grounds that
-    the model "wanted to go further". Where the curvature along the gradient
-    is ~zero every step ends on the boundary no matter how small the gradient
-    is, so that condition could never be discharged: a converged run consumed
-    its entire iteration budget and only the post-loop check reported success
-    -- with nit == maxiter and an answer that depended on maxiter.
+    Guards the unconditional convergence test. Gating it on the previous step
+    having been interior -- on the grounds that a boundary-limited step means
+    the model "wanted to go further" -- fails here: with ~zero curvature along
+    the gradient every step ends on the boundary no matter how small the
+    gradient is, so such a condition can never be discharged. A run that
+    cannot stop burns its whole iteration budget and returns nit == maxiter
+    with an answer that depends on maxiter, which the assertions below rule
+    out.
     """
     N, lam, delta_max, x_start = 8, 1e-6, 0.1, 2.0
     fun_grad, hessp = _flat_quadratic(lam)

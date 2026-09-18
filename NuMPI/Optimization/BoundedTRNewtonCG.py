@@ -370,15 +370,14 @@ def tr_newton_bounded(
             grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
         )
         r_norm = pnp.max(np.abs(r_free))
-        # First-order optimality is measured at the current iterate and
-        # says nothing about the trust region, so it is tested unconditionally
-        # (Conn, Gould & Toint, Alg. 6.1.1). An earlier version skipped the
-        # test after a boundary-limited step, on the grounds that the model
-        # "wanted to go further" -- but where the curvature along the gradient
-        # is near zero every step runs to the boundary, however small the
-        # gradient, so that condition could never be discharged and a
-        # converged run spun to maxiter. See test_converges_when_steps_stay_
-        # boundary_limited.
+        # First-order optimality, tested unconditionally (Conn, Gould &
+        # Toint, Alg. 6.1.1). The KKT residual is evaluated at the current
+        # iterate and does not depend on the trust region, so a step that
+        # ended on the trust-region boundary is no evidence against
+        # stationarity: where the curvature along the gradient is near zero
+        # every step runs to the boundary however small the gradient, and
+        # gating this test on an interior step would leave such a run unable
+        # to stop at all. See test_converges_when_steps_stay_boundary_limited.
         if r_norm < gtol:
             return _finish(
                 True, iteration - 1, r_norm,

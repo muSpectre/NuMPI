@@ -47,9 +47,10 @@ Public entry points
                           noise-drowned line search stalls.
 - ``constrained_conjugate_gradients`` : bound-constrained CG (Bugnicourt
                           et al. 2018), optionally with a linear equality
-                          via the ``linear_constraint`` kwarg or the legacy
-                          ``mean_val`` shortcut. Does *not* restart the
-                          conjugate direction when the active set changes.
+                          via the ``linear_constraint`` kwarg, or the
+                          ``mean_val`` shortcut for uniform weights. Does
+                          *not* restart the conjugate direction when the
+                          active set changes.
 - ``constrained_conjugate_gradients_with_restart`` : bound-constrained CG
                           (Polonsky & Keer 1999) that restarts the conjugate
                           direction to steepest descent whenever the active

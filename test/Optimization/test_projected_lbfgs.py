@@ -382,8 +382,8 @@ def test_nd_x0_matches_flattened_run():
 
     # This checks the n-D/flat *identity*, which holds at any iteration
     # budget -- the problem never reaches gtol, so a large maxiter only burns
-    # CI time (this was the slowest test of the whole suite, ~7 s per rank at
-    # maxiter=500; the runs are compared iterate-for-iterate anyway).
+    # CI time (maxiter=500 costs ~7 s per rank, the slowest test in the suite,
+    # and the runs are compared iterate-for-iterate anyway).
     kw = dict(jac=True, gtol=1e-10, maxiter=100, max_halvings=60,
               bounds_lo=lo, bounds_hi=hi)
     res_nd = l_bfgs_projected(
