@@ -439,8 +439,8 @@ def test_load_subdomain_out_of_bounds(comm_self, npyfile):
 def test_load_partial_subdomain(comm_self, npyfile):
     """
     Reading a sub-region that does not cover the whole stored array is a
-    legitimate operation and must succeed (regression test for #85). Unlike
-    writing, reads do not require the subdomains to tile the grid.
+    legitimate operation and must succeed: unlike writing, reads do not
+    require the subdomains to tile the grid.
     """
     np.save(npyfile, np.arange(10.0))
     # First five elements.
@@ -465,8 +465,8 @@ def test_load_partial_subdomain(comm_self, npyfile):
 def test_load_partial_subdomain_parallel(comm):
     """
     Each rank reads a single, distinct point of a larger stored array. The
-    subdomains intentionally do NOT tile the grid (only the first `size`
-    points are read), which must be allowed on read (regression test for #85).
+    subdomains intentionally do NOT tile the grid -- only the first `size`
+    points are read -- which is allowed on read.
     """
     if comm.size == 1:
         pytest.skip("requires more than one process")

@@ -140,7 +140,7 @@ def test_bugnicourt_cg_mean_val_active_bounds(comm):
 def test_bugnicourt_cg_linear_constraint_uniform_matches_mean_val(comm):
     """
     A LinearConstraint with uniform weights and target = mean_val * N must
-    produce the same minimiser as the legacy mean_val kwarg.
+    produce the same minimiser as the equivalent mean_val kwarg.
     """
     n = 128
     np.random.seed(0)
@@ -150,11 +150,11 @@ def test_bugnicourt_cg_linear_constraint_uniform_matches_mean_val(comm):
     ones = np.ones_like(xstart)
     nb_DOF = Reduction(comm).sum(xstart.size) if comm is not None else xstart.size
 
-    res_legacy = constrained_conjugate_gradients(
+    res_mean_val = constrained_conjugate_gradients(
         obj.f_grad, obj.hessian_product, args=(2,),
         x0=xstart, mean_val=0.5, communicator=comm,
     )
-    parallel_assert(comm, res_legacy.success, res_legacy.message)
+    parallel_assert(comm, res_mean_val.success, res_mean_val.message)
 
     lc = LinearConstraint(
         ones, target=0.5 * nb_DOF,
@@ -167,13 +167,14 @@ def test_bugnicourt_cg_linear_constraint_uniform_matches_mean_val(comm):
     parallel_assert(comm, res_generic.success, res_generic.message)
 
     # Both paths should agree on the minimiser.
-    assert_all_allclose(comm, res_legacy.x, res_generic.x, atol=1e-6)
+    assert_all_allclose(comm, res_mean_val.x, res_generic.x, atol=1e-6)
 
 
 def test_bugnicourt_cg_linear_constraint_non_uniform(comm):
     """
-    Non-uniform weights exercise the generalised path that was previously
-    unreachable (the hard-coded mean-value logic only handled a = 1).
+    Non-uniform weights exercise the generalised constraint path: the weight
+    vector is not proportional to the all-ones vector, so the uniform-weight
+    mean-value shortcut cannot express this constraint.
     """
     n = 128
     np.random.seed(2)

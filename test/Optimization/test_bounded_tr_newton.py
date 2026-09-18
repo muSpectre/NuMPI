@@ -53,6 +53,25 @@ def _indefinite_minimiser(diag, g):
     return x
 
 
+def _flat_quadratic(lam):
+    """Very flat convex quadratic 0.5 lam |x|^2, paired with a *zero* Hessian
+    model.
+
+    The zero model has no curvature for Steihaug to work against, so every
+    subproblem exits through the negative-curvature branch with a step that
+    runs all the way to the trust-region boundary -- however small the
+    gradient. Pinning delta at delta_max then keeps every accepted step
+    boundary-limited for the whole run.
+    """
+    def fun_grad(x):
+        return 0.5 * lam * float(x @ x), lam * x
+
+    def hessp(x, v):
+        return np.zeros_like(v)
+
+    return fun_grad, hessp
+
+
 def test_unbounded_quadratic():
     """Convex quadratic without bounds: exact Newton model, so the first
     interior Steihaug solve is the Newton step and convergence is immediate."""
@@ -266,6 +285,56 @@ def test_callback_and_histories():
     assert len(iterates) >= 1
     assert len(res.delta_history) == len(res.rho_history)
     assert res.nb_hessp > 0
+
+
+def test_converges_when_steps_stay_boundary_limited():
+    """A run whose every step is trust-region-limited must still stop on the
+    gradient tolerance.
+
+    Guards the unconditional convergence test. Gating it on the previous step
+    having been interior -- on the grounds that a boundary-limited step means
+    the model "wanted to go further" -- fails here: with ~zero curvature along
+    the gradient every step ends on the boundary no matter how small the
+    gradient is, so such a condition can never be discharged. A run that
+    cannot stop burns its whole iteration budget and returns nit == maxiter
+    with an answer that depends on maxiter, which the assertions below rule
+    out.
+    """
+    N, lam, delta_max, x_start = 8, 1e-6, 0.1, 2.0
+    fun_grad, hessp = _flat_quadratic(lam)
+    # |g|inf = lam * x crosses gtol at x = 1.2, while the minimiser (x = 0) is
+    # still eight boundary-limited steps away -- so a run that fails to notice
+    # convergence has plenty of budget left to burn.
+    gtol = 1.25e-6
+    budgets = (20, 60, 200)
+
+    runs = [
+        tr_newton_bounded(fun_grad, np.full(N, x_start), hessp, jac=True,
+                          bounds_lo=-10.0, bounds_hi=10.0, gtol=gtol,
+                          maxiter=maxiter, delta0=delta_max,
+                          delta_max=delta_max)
+        for maxiter in budgets
+    ]
+
+    for res, maxiter in zip(runs, budgets):
+        assert res.success, res.message
+        assert float(np.max(np.abs(res.jac))) < gtol
+        # Stop when converged, not when the budget runs out.
+        assert res.nit < maxiter, (
+            f"maxiter={maxiter}: ran the full budget (nit={res.nit}) although "
+            f"|g|inf={float(np.max(np.abs(res.jac))):.3e} < gtol={gtol:.3e}"
+        )
+        # Every accepted step moved exactly one trust-region radius, i.e. the
+        # run really did stay boundary-limited throughout (without this the
+        # test could silently stop exercising the path it is guarding).
+        np.testing.assert_allclose(res.x, x_start - res.nit * delta_max,
+                                   atol=1e-12)
+        np.testing.assert_allclose(res.delta_history, delta_max, atol=1e-12)
+
+    # The result must not depend on the iteration budget.
+    for res in runs[1:]:
+        assert res.nit == runs[0].nit
+        np.testing.assert_array_equal(res.x, runs[0].x)
 
 
 # ----------------------------------------------------------------------------
