@@ -161,8 +161,8 @@ def l_bfgs(
         Initial guess for the previous value of x. If None, a steepest descent step will
         be performed.
     maxcor : int, optional
-        The maximum number of variable metric corrections used to define the limited
-        memory matrix.
+        The maximum number of variable metric corrections that define the
+        limited memory matrix.
     gtol : float, optional
         The iteration will stop when max{|proj g_i | i = 1, ..., n} <= gtol where pg_i
         is the i-th component of the projected gradient.
