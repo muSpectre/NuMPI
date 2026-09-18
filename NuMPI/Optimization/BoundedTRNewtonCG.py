@@ -341,7 +341,6 @@ def tr_newton_bounded(
     nb_hessp_total = 0
     delta_history = []
     rho_history = []
-    last_on_boundary = False
 
     def _finish(success, nit, r_norm, message):
         return OptimizeResult(
@@ -371,9 +370,16 @@ def tr_newton_bounded(
             grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
         )
         r_norm = pnp.max(np.abs(r_free))
-        # A boundary-limited step is never counted as converged (the model
-        # wanted to go further); test only after interior/accepted steps.
-        if r_norm < gtol and not last_on_boundary:
+        # First-order optimality is measured at the current iterate and
+        # says nothing about the trust region, so it is tested unconditionally
+        # (Conn, Gould & Toint, Alg. 6.1.1). An earlier version skipped the
+        # test after a boundary-limited step, on the grounds that the model
+        # "wanted to go further" -- but where the curvature along the gradient
+        # is near zero every step runs to the boundary, however small the
+        # gradient, so that condition could never be discharged and a
+        # converged run spun to maxiter. See test_converges_when_steps_stay_
+        # boundary_limited.
+        if r_norm < gtol:
             return _finish(
                 True, iteration - 1, r_norm,
                 "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
@@ -398,7 +404,6 @@ def tr_newton_bounded(
             delta *= 0.25
             delta_history.append(delta / np.sqrt(n_global))
             rho_history.append(np.nan)
-            last_on_boundary = False
             if delta < 1e-14 * delta_cap:
                 return _finish(
                     False, iteration, r_norm,
@@ -420,7 +425,6 @@ def tr_newton_bounded(
                 delta *= 0.25
                 delta_history.append(delta / np.sqrt(n_global))
                 rho_history.append(np.nan)
-                last_on_boundary = False
                 if delta < 1e-14 * delta_cap:
                     return _finish(
                         False, iteration, r_norm,
@@ -483,11 +487,9 @@ def tr_newton_bounded(
 
         if accepted:
             x, phi, grad = x_try, phi_try, grad_try
-            last_on_boundary = on_boundary
             if callback is not None:
                 callback(x.reshape(original_shape))
         else:
-            last_on_boundary = False
             if delta < 1e-14 * delta_cap:
                 return _finish(
                     False, iteration, r_norm,

@@ -2,6 +2,15 @@ Change log for NuMPI
 ===================
 
 
+v0.15.2 (18Sep26)
+-----------------
+
+- BUG: `tr_newton_bounded` kept iterating after it had converged whenever
+  every step was trust-region-limited (near-zero curvature along the
+  gradient), because the convergence test was skipped after a boundary-limited
+  step. It ran to `maxiter` and returned a result that depended on the
+  iteration budget.
+
 v0.15.1 (28Jul26)
 -----------------
 
