@@ -110,7 +110,9 @@ def l_bfgs_bounded(
     comm, pnp : MPI.Comm or Reduction, optional
         MPI communicator or pre-built reduction wrapper. Pass one, not both.
     callback : callable, optional
-        ``callback(x)`` called after each iteration.
+        ``callback(x)`` called after each iteration. If it returns
+        ``True``, the optimization stops immediately with
+        ``success=True`` — use this for a custom stopping criterion.
     disp : bool, optional
         Print a per-iteration diagnostic table.
 
@@ -304,7 +306,12 @@ def l_bfgs_bounded(
             print(f"{iteration:<5d} {phi:<14.6e} {r_norm:<14.4e} {alpha:<8.2e}")
 
         if callback is not None:
-            callback(x.reshape(original_shape))
+            stop = callback(x.reshape(original_shape))
+            if stop is True:
+                return _finish(
+                    True, x, phi, grad, iteration, r_norm,
+                    "CONVERGENCE: NORM_OF_custom_stop_crit_<= _csc_tol",
+                )
 
         if r_norm < gtol:
             return _finish(
