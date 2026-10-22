@@ -110,6 +110,14 @@ Use `NuMPI.Tools.Reduction(comm)` to obtain a `pnp` object whose `sum`, `max`,
 When `mpi4py` is not installed, `NuMPI.MPIStub` provides the same interface
 with a single "rank", so the same code runs serially too.
 
+`comm` need not be an mpi4py communicator. Any object implementing
+`allreduce(array, op)` (with `op` one of `"sum"`, `"max"`, `"min"`, returning an
+array of the same shape and dtype on every rank), `compare(other)` (returning
+`"identical"`, `"congruent"`, `"similar"` or `"unequal"`), `size` and `rank` is
+accepted; muGrid's `Communicator` (e.g. `muGrid.Communicator.world()`) is one,
+and works without mpi4py. A communicator with mpi4py's `Allreduce` is driven
+through mpi4py as before.
+
 A typical setup with a communicator-provided subdomain looks like:
 
 ```python
