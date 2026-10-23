@@ -2,6 +2,17 @@ Change log for NuMPI
 ===================
 
 
+v0.16.0 (not yet released)
+--------------------------
+
+- ENH: `Reduction` (and with it the optimizers and `Testing.Assertions`)
+  accepts communicators that are not mpi4py's, such as muGrid's
+  `Communicator`, through a small protocol: `allreduce(array, op)` with `op`
+  one of "sum", "max", "min", `compare`, `size` and `rank`. mpi4py
+  communicators work as before; mpi4py is not needed for the new path.
+- API: `Reduction.any` and `Reduction.all` reduce as max/min over 0/1, which
+  every communicator supports, instead of logical or/and; results are unchanged.
+
 v0.15.2 (18Sep26)
 -----------------
 

@@ -1,12 +1,17 @@
 import numpy as np
 
-from NuMPI import MPI
+from ..Tools.Reduction import Reduction
+
+
+def _nb_failed(comm, failed):
+    """Number of ranks on which ``failed`` is true. Through ``Reduction``, so
+    any communicator NuMPI accepts works (mpi4py's or one implementing the
+    ``allreduce`` protocol, e.g. muGrid's)."""
+    return int(Reduction(comm).sum(np.array([failed], dtype=np.int32)))
 
 
 def parallel_assert(comm, condition, message="Assertion failed"):
-    failed_recv = np.ones(1, dtype=int)
-    comm.Allreduce(np.array([not condition], dtype=int), failed_recv, op=MPI.SUM)
-    if failed_recv[0] > 0:
+    if _nb_failed(comm, not condition) > 0:
         raise AssertionError(message)
 
 
@@ -19,11 +24,7 @@ def _assert_one(fun):
             except AssertionError as exc:
                 exception = exc
 
-        failed_recv = np.ones(1, dtype=int)
-        comm.Allreduce(
-            np.array([exception is not None], dtype=int), failed_recv, op=MPI.SUM
-        )
-        if failed_recv[0] > 0:
+        if _nb_failed(comm, exception is not None) > 0:
             if exception is None:
                 raise AssertionError()
             else:
@@ -40,11 +41,7 @@ def _assert_all(fun):
         except AssertionError as exc:
             exception = exc
 
-        failed_recv = np.ones(1, dtype=int)
-        comm.Allreduce(
-            np.array([exception is not None], dtype=int), failed_recv, op=MPI.SUM
-        )
-        if failed_recv[0] > 0:
+        if _nb_failed(comm, exception is not None) > 0:
             if exception is None:
                 raise AssertionError()
             else:
