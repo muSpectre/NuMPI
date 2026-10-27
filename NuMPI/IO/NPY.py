@@ -388,7 +388,8 @@ def save_npy(
     file = MPI.File.Open(comm, fn, MPI.MODE_CREATE | MPI.MODE_WRONLY)
     if comm.rank == 0:
         file.Write(magic_str)
-        file.Write(np.int16(len(arr_dict_str)))
+        # Header length is a little-endian unsigned short (NPY format version 1.0)
+        file.Write(np.array(len(arr_dict_str), dtype="<u2").tobytes())
         file.Write(arr_dict_str.encode("latin-1"))
 
     # Write data
