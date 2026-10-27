@@ -100,6 +100,33 @@ def _validate_subdomain(
         )
 
 
+def _native_byte_order(dtype):
+    """Same data type as `dtype`, but in native byte order."""
+    return np.dtype(dtype).newbyteorder("=")
+
+
+def _mpi_type_is_known(dtype):
+    """Whether the MPI library provides a datatype for `dtype`. Not all do,
+    e.g. for half precision."""
+    try:
+        MPI._typedict[np.dtype(dtype).char]
+    except KeyError:
+        return False
+    return True
+
+
+def _mpi_buffer(data):
+    """
+    Buffer for MPI I/O of the contiguous array `data`. mpi4py only accepts
+    native byte order and data types the MPI library knows. MPI I/O copies
+    the bytes unchanged, so we pass a native-order view of the same memory,
+    or its raw bytes for types unknown to MPI.
+    """
+    if _mpi_type_is_known(data.dtype):
+        return data.view(_native_byte_order(data.dtype))
+    return [data.reshape(-1, order="A").view(np.uint8), MPI.BYTE]
+
+
 @contextlib.contextmanager
 def cast_mpi_types(
         numpy_dtype: np.dtype, nb_grid_pts: Sequence[int],
@@ -108,8 +135,12 @@ def cast_mpi_types(
         nb_components: Union[int, Sequence[int]],
         fortran_order: bool, components_are_leading: bool):
 
-    # get the corresponding MPI Datatype
-    elementary_type = MPI._typedict[numpy_dtype.char]
+    # get the corresponding MPI Datatype; types unknown to the MPI library
+    # are transferred as raw bytes (see `_mpi_buffer`)
+    if _mpi_type_is_known(numpy_dtype):
+        elementary_type = MPI._typedict[numpy_dtype.char]
+    else:
+        elementary_type = MPI.BYTE.Create_contiguous(numpy_dtype.itemsize)
     if np.multiply.reduce(nb_subdomain_grid_pts) == 0:
         # For the process that gets zero elements, cast a filetype that eventually doesn't read / write
         file_type = elementary_type.Create_contiguous(0)
@@ -228,12 +259,14 @@ class NPYFile(MPIFileView):
                             check_tiling=False)
 
         buf_shape = recover_shape(nb_subdomain_grid_pts, nb_components, components_are_leading)
-        data = np.empty(buf_shape, dtype=self.dtype, order='F' if self.fortran_order else 'C')
+        # Read into a native buffer (see `_mpi_buffer`) and reinterpret it with
+        # the (possibly non-native) data type of the file
+        data = np.empty(buf_shape, dtype=_native_byte_order(self.dtype), order='F' if self.fortran_order else 'C')
         with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components,
                             self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
-            self.file.Read_all(data)
-        return data
+            self.file.Read_all(_mpi_buffer(data))
+        return data.view(self.dtype)
 
     def close(self):
         self.file.Close()
@@ -355,14 +388,16 @@ def save_npy(
     file = MPI.File.Open(comm, fn, MPI.MODE_CREATE | MPI.MODE_WRONLY)
     if comm.rank == 0:
         file.Write(magic_str)
-        file.Write(np.int16(len(arr_dict_str)))
+        # Header length is a little-endian unsigned short (NPY format version 1.0)
+        file.Write(np.array(len(arr_dict_str), dtype="<u2").tobytes())
         file.Write(arr_dict_str.encode("latin-1"))
 
     # Write data
     with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations,
                         nb_components, fortran_order, components_are_leading) as [etype, filetype]:
         file.Set_view(header_length, etype, filetype)
-        file.Write_all(data)
+        # The header records the actual data type and byte order
+        file.Write_all(_mpi_buffer(data))
 
     # Close file
     file.Close()
