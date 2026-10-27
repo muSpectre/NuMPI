@@ -1,0 +1,64 @@
+site_name: NuMPI
+site_description: Numerical tools for MPI-parallelized Python codes that also run without MPI
+site_url: https://muspectre.github.io/NuMPI/
+repo_url: https://github.com/muSpectre/NuMPI
+repo_name: muSpectre/NuMPI
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      check_paths: true
+  - tables
+  - pymdownx.arithmatex:
+      generic: true
+
+# MathJax renders the $...$ / $$...$$ blocks that arithmatex marks up.
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Communicators & reductions: mpi.md
+  - Parallel I/O: io.md
+  - FFT engines: fft.md
+  - Optimizers: optimization.md
+  - Testing utilities: testing.md
+  - Changelog: changelog.md
+
+exclude_docs: |
+  requirements.txt

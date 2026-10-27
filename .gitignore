@@ -11,3 +11,5 @@ dist/
 venv
 .venv
 NuMPI/_version.py
+# MkDocs build output
+site/
