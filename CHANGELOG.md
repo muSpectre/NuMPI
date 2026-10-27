@@ -8,6 +8,10 @@ v0.17.1 (27Oct26)
 - BUG: `load_npy` and `save_npy` failed for data in non-native byte order
   (e.g. big-endian files) when mpi4py is installed; such files now load and
   save with their data type preserved, like with `numpy.load` and `numpy.save`
+- BUG: `load_npy` and `save_npy` failed with mpi4py for data types the MPI
+  library does not provide (e.g. half precision with Ubuntu's Open MPI)
+- BUG: `save_npy` wrote the header length in native byte order, which
+  produced invalid files on big-endian machines
 
 v0.17.0 (27Oct26)
 -----------------
