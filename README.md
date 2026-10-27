@@ -10,6 +10,7 @@ NuMPI is a collection of numerical tools for MPI-parallelized Python codes. NuMP
   - `l_bfgs_bounded` — box-constrained (`lo <= x <= hi`) with optional index pinning, two-loop recursion and projected Armijo backtracking.
   - `l_bfgs_projected` — a single linear equality `<a, x> = target` plus optional box bounds.
 - An MPI-parallel bound constrained conjugate gradients algorithm.
+- FFT engines with the interface of [muGrid](https://github.com/muSpectre/muGrid)'s `FFTEngine`: a serial engine based on `numpy.fft`, and muGrid's MPI-parallel engine for domain-decomposed grids.
 
 Build status
 ------------
@@ -146,6 +147,29 @@ The returned `res.x` is the local slice of the solution; `res.fun`,
 See `NuMPI/Optimization/__init__.py` for optimizer-specific notes and
 `test/Optimization/MPIMinimizationProblems.py::MPI_Quadratic` for a
 reference implementation of a distributed objective.
+
+FFT engines
+-----------
+
+`NuMPI.FFT.make_fft_engine` returns an FFT engine for a (possibly
+domain-decomposed) grid. For a single process this is `NumpyFFTEngine`, which
+needs only numpy; for multiple processes it is `muGrid.FFTEngine` (install with
+`pip install NuMPI[fft]`; muGrid must be compiled with MPI support). Both share
+muGrid's conventions:
+
+```python
+import numpy as np
+from NuMPI.FFT import make_fft_engine
+
+engine = make_fft_engine((nx, ny), communicator=comm)
+real_field = engine.real_space_field("heights")
+fourier_field = engine.fourier_space_field("heights_q")
+real_field.p[...] = local_heights  # subdomain at engine.subdomain_locations
+engine.fft(real_field, fourier_field)  # half-complex along the first axis
+q = 2 * np.pi * (engine.fftfreq.T / pixel_size).T  # wavevectors
+engine.ifft(fourier_field, real_field)
+local_heights = real_field.p * engine.normalisation  # ifft is unnormalized
+```
 
 Development & Funding
 ---------------------
