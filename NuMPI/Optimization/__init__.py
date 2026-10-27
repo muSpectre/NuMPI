@@ -81,8 +81,8 @@ disagree and different ranks end up at different iterates).
 ``callback(x)`` receives the *local* slice. Gather yourself if you need the
 global state for I/O.
 
-See the "MPI Conventions" section of the top-level ``README.md`` for a fuller
-treatment and a worked example.
+See the MPI conventions in the documentation for a fuller treatment and a
+worked example: https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
 """
 
 

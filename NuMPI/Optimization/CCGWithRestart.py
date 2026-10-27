@@ -103,8 +103,8 @@ def constrained_conjugate_gradients_with_restart(
     **MPI contract.** ``x0`` and ``bounds`` are *local* per-rank slices and the
     gradient returned by ``fun`` is local; the scalar ``mean_val`` and ``gtol``
     are *global* (identical on every rank). All inner products, the restart
-    decision and the convergence test are globally reduced. See the "MPI
-    Conventions" section of the top-level README.
+    decision and the convergence test are globally reduced. See the MPI
+    conventions in the documentation: https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
 
     References
     ----------

@@ -199,8 +199,8 @@ def l_bfgs(
     -----
     **MPI contract.** ``x`` and the gradient returned by ``fun``/``jac`` are
     *local* per-rank slices; the scalar energy returned by ``fun`` must be
-    **globally reduced** (same value on every rank). See the "MPI
-    Conventions" section of the top-level README.
+    **globally reduced** (same value on every rank). See the MPI
+    conventions in the documentation: https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
     """
     # user can provide x in the shape of his convenience
     # but we will work with the shape (-1, 1)

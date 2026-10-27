@@ -74,8 +74,8 @@ class LinearConstraint:
         Reduction wrapper exposing ``sum``. Use ``NuMPI.Tools.Reduction(comm)``
         for MPI parallel runs so that ``<a, a>``, ``<a, grad>`` and the bisection's
         ``Phi(mu)`` sum are taken across ranks; defaults to ``numpy`` for
-        serial execution. See the "MPI Conventions" section of the top-level
-        README.
+        serial execution. See the MPI conventions in the documentation:
+        https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
     """
 
     def __init__(self, a, target, pnp=None):

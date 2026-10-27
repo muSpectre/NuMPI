@@ -77,7 +77,9 @@ res = l_bfgs_projected(fun, np.full(n_local, 0.1), constraint, jac=True,
 
 Pass either a communicator (`comm`) or a reduction wrapper (`pnp`) to the
 L-BFGS and trust-region solvers, not both. The conjugate-gradient solvers take
-`communicator`.
+`communicator`. `MPI_Quadratic` in
+[`test/Optimization/MPIMinimizationProblems.py`](https://github.com/muSpectre/NuMPI/blob/main/test/Optimization/MPIMinimizationProblems.py)
+is a reference implementation of a distributed objective.
 
 ## Objective and gradient
 
