@@ -46,9 +46,9 @@ except ImportError:
     # _version.py is written by hatch-vcs at build time. If it's absent
     # (e.g. running from an unbuilt source tree), fall back to installed
     # distribution metadata.
-    try:
-        from importlib.metadata import PackageNotFoundError, version
+    from importlib.metadata import PackageNotFoundError, version
 
+    try:
         __version__ = version("NuMPI")
-    except (ImportError, PackageNotFoundError):
+    except PackageNotFoundError:
         __version__ = "0.0.0+unknown"

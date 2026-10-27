@@ -110,7 +110,7 @@ def constrained_conjugate_gradients_with_restart(
     ----------
     .. [1] I.A. Polonsky, L.M. Keer, Wear 231, 206 (1999).
     """
-    if not isinstance(mean_val, (type(None), int, float)):
+    if not isinstance(mean_val, int | float | None):
         raise ValueError(
             'Inappropriate type: {} for mean_val whereas a float or int is '
             'expected'.format(type(mean_val)))

@@ -32,9 +32,9 @@ the features that we need in our projects. If you miss some functionality,
 implement it and submit it back to us.
 """
 
+from collections.abc import Sequence
 from enum import Enum
 from io import TextIOBase
-from typing import Optional, Sequence
 
 import numpy as np
 
@@ -72,7 +72,7 @@ class Datatype(object):
     def __init__(
             self, numpy_type: np.dtype, chunk_positions: Sequence[int],
             chunk_sizes: Sequence[int],
-            lower_bound: Optional[int] = None, upper_bound: Optional[int] = None):
+            lower_bound: int | None = None, upper_bound: int | None = None):
         self._numpy_type = numpy_type
 
         # Check

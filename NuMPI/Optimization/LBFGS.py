@@ -495,7 +495,7 @@ def l_bfgs(
         p2 = -RiSg  # TODO
 
         Hgrad = gamma * grad
-        for si, yi, p1i, p2i in zip(Slist, Ylist, p1.flat, p2.flat):
+        for si, yi, p1i, p2i in zip(Slist, Ylist, p1.flat, p2.flat, strict=True):
             Hgrad += si * p1i.item() + gamma * yi * p2i.item()
 
         phi_old = float(phi)
