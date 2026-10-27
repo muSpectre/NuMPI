@@ -100,3 +100,53 @@ jobs:
           flags: mpi-${{ matrix.mpi }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  # FFT engines against muGrid (requires Python >= 3.10); with MPI, muGrid
+  # is compiled against the same MPI library as mpi4py
+  tests-mugrid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    strategy:
+      matrix:
+        mpi: [ 'yes', 'no' ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up python3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          set -x
+          sudo apt-get update -qy
+          python3 -m venv venv
+          source venv/bin/activate
+          python3 -m pip install --upgrade pip
+          if [ "${{ matrix.mpi }}" == "yes" ]; then
+            sudo apt-get install -y openmpi-bin libopenmpi-dev
+            export CC=mpicc CXX=mpicxx
+            python3 -m pip install -v --no-binary mpi4py --no-binary muGrid .[test,mpi,fft]
+          else
+            python3 -m pip install -v .[test,fft]
+          fi
+          python3 -c "import muGrid; print('muGrid', muGrid.__version__, 'MPI:', muGrid.has_mpi)"
+
+      - name: Test with pytest
+        run: |
+          source venv/bin/activate
+          if [ "${{ matrix.mpi }}" == "yes" ]; then
+            python3 -c "import muGrid, sys; sys.exit(0 if muGrid.has_mpi else 'muGrid was compiled without MPI')"
+            export OMPI_MCA_mpi_yield_when_idle=1
+            for nbprocs in 1 2 4; do
+              echo "=== $nbprocs MPI processes ==="
+              mpirun --oversubscribe -n $nbprocs python3 -m pytest --verbose --full-trace test/test_fft.py test/test_fft_mugrid.py
+            done
+          else
+            python3 -m pytest --verbose --full-trace test/test_fft.py test/test_fft_mugrid.py
+          fi
