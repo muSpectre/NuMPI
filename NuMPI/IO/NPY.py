@@ -100,6 +100,11 @@ def _validate_subdomain(
         )
 
 
+def _native_byte_order(dtype):
+    """Same data type as `dtype`, but in native byte order."""
+    return np.dtype(dtype).newbyteorder("=")
+
+
 @contextlib.contextmanager
 def cast_mpi_types(
         numpy_dtype: np.dtype, nb_grid_pts: Sequence[int],
@@ -228,12 +233,15 @@ class NPYFile(MPIFileView):
                             check_tiling=False)
 
         buf_shape = recover_shape(nb_subdomain_grid_pts, nb_components, components_are_leading)
-        data = np.empty(buf_shape, dtype=self.dtype, order='F' if self.fortran_order else 'C')
+        # mpi4py only accepts buffers in native byte order. MPI I/O copies the
+        # bytes unchanged, so we read into a native buffer and reinterpret it
+        # with the (possibly non-native) data type of the file.
+        data = np.empty(buf_shape, dtype=_native_byte_order(self.dtype), order='F' if self.fortran_order else 'C')
         with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations, nb_components,
                             self.fortran_order, components_are_leading) as [etype, filetype]:
             self.file.Set_view(self.header_length, etype, filetype)
             self.file.Read_all(data)
-        return data
+        return data.view(self.dtype)
 
     def close(self):
         self.file.Close()
@@ -362,7 +370,9 @@ def save_npy(
     with cast_mpi_types(data.dtype, nb_grid_pts, nb_subdomain_grid_pts, subdomain_locations,
                         nb_components, fortran_order, components_are_leading) as [etype, filetype]:
         file.Set_view(header_length, etype, filetype)
-        file.Write_all(data)
+        # mpi4py only accepts buffers in native byte order; the bytes are
+        # written unchanged, and the header records the actual byte order
+        file.Write_all(data.view(_native_byte_order(data.dtype)))
 
     # Close file
     file.Close()
