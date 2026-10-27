@@ -1,179 +1,87 @@
-NuMPI
-=====
+# NuMPI
 
-NuMPI is a collection of numerical tools for MPI-parallelized Python codes. The documentation is at https://muspectre.github.io/NuMPI/.
+[![Tests](https://github.com/muSpectre/NuMPI/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/muSpectre/NuMPI/actions/workflows/tests.yml) [![Flake8](https://github.com/muSpectre/NuMPI/actions/workflows/flake8.yml/badge.svg?branch=main)](https://github.com/muSpectre/NuMPI/actions/workflows/flake8.yml) [![Docs](https://github.com/muSpectre/NuMPI/actions/workflows/docs.yml/badge.svg?branch=main)](https://muspectre.github.io/NuMPI/)
 
-NuMPI presently contains:
+Numerical tools for MPI-parallelized Python codes. Code written with NuMPI runs
+unchanged in parallel under `mpirun` and serially without any MPI installation.
 
-- An (incomplete) stub implementation of the [mpi4py](https://github.com/mpi4py/mpi4py) interface to the MPI libraries. This allows running serial versions of MPI parallel code  without having `mpi4py` (and hence a full MPI stack) installed.
-- Parallel file IO in numpy's [.npy](https://docs.scipy.org/doc/numpy/reference/generated/numpy.save.html) format using MPI I/O.
-- MPI-parallel L-BFGS optimizers:
-  - `l_bfgs` — unconstrained, with a strong-Wolfe line search.
-  - `l_bfgs_bounded` — box-constrained (`lo <= x <= hi`) with optional index pinning, two-loop recursion and projected Armijo backtracking.
-  - `l_bfgs_projected` — a single linear equality `<a, x> = target` plus optional box bounds.
-- An MPI-parallel bound constrained conjugate gradients algorithm.
-- FFT engines with the interface of [muGrid](https://github.com/muSpectre/muGrid)'s `FFTEngine`: a serial engine based on `numpy.fft`, and muGrid's MPI-parallel engine for domain-decomposed grids.
+- **MPI is optional**: `NuMPI.MPI` is mpi4py's `MPI` module if mpi4py is
+  installed, and otherwise a stub with the same interface for a single process.
+- **Reductions** (`sum`, `max`, `min`, `mean`, `dot`, `any`, `all`) over
+  distributed arrays, for mpi4py communicators and for muGrid's `Communicator`.
+- **Parallel I/O** of domain-decomposed arrays in numpy's `.npy` format with
+  MPI I/O.
+- **FFT engines** with the interface of [muGrid](https://github.com/muSpectre/muGrid)'s
+  `FFTEngine`: a serial engine based on `numpy.fft`, and muGrid's MPI-parallel
+  engine for domain-decomposed grids.
+- **Parallel optimizers**: L-BFGS (unconstrained, bound-constrained, and with a
+  linear equality), bound-constrained trust-region Newton-CG and constrained
+  conjugate gradients, all on distributed arrays.
+- **Testing utilities**: pytest fixtures for communicators of several sizes and
+  assertions that agree across processes.
 
-Build status
-------------
-
-[![Tests](https://github.com/muSpectre/NuMPI/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/muSpectre/NuMPI/actions/workflows/tests.yml) [![Flake8](https://github.com/muSpectre/NuMPI/actions/workflows/flake8.yml/badge.svg?branch=main)](https://github.com/muSpectre/NuMPI/actions/workflows/flake8.yml)
-
-Installation
-------------
-
-```
-python3 -m pip install NuMPI
-```
-
-Development Installation
-------------------------
-
-Clone the repository.
-
-To use the code, install the current package as editable:
-
-```
-pip install -e .[test]
-```
-
-Testing
--------
-
-You have to do a development installation to be able to run the tests.
-
-From the main installation directory, run the test suite with pytest:
+## Installation
 
 ```bash
-python -m pytest
+pip install NuMPI
 ```
 
-This runs serially and exercises the MPI stub implementation, so it works
-without `mpi4py` installed. To run a single test file or test:
+NuMPI requires Python 3.10 or later. The `mpi` extra installs mpi4py, the `fft`
+extra muGrid for parallel FFTs:
 
 ```bash
-python -m pytest test/Optimization/test_cg.py
-python -m pytest test/Optimization/test_cg.py::test_directions -s
+pip install NuMPI[mpi,fft]
 ```
 
-To run the suite under real MPI at a given number of ranks (this is what CI
-does, for 1, 2, 4, 8 and 10 ranks):
+> **Note:** mpi4py and muGrid must be compiled against the MPI library of your
+> system. Build them from source:
+>
+> ```bash
+> CC=mpicc CXX=mpicxx pip install --no-binary mpi4py --no-binary muGrid NuMPI[mpi,fft]
+> ```
 
-```bash
-mpirun --oversubscribe -n 4 python -m pytest --verbose
-```
-
-MPI Conventions
----------------
-
-All of NuMPI's parallel algorithms operate on *distributed* arrays: each MPI
-rank holds a slice of the global data, and scalar quantities (energies, norms,
-convergence tolerances, Lagrange multipliers) are *globally reduced* — the
-same value on every rank. Understanding the split between *local* and *global*
-is essential to using the optimizers correctly; this section spells it out.
-
-### Distributed vs. global
-
-| Quantity                                      | Lives where                     |
-|-----------------------------------------------|---------------------------------|
-| Iterate `x`, gradient `grad`, initial guess `x0` | *local* — each rank's own slice |
-| Bounds `bounds_lo`, `bounds_hi`, `zero_mask`  | *local* — sliced to match `x`   |
-| `LinearConstraint.a` (weight vector)          | *local*                         |
-| Scalar energy `f(x)`                          | **global** (reduced)            |
-| `LinearConstraint.target` (right-hand side)   | **global** (same on every rank) |
-| Lagrange multiplier, convergence tolerance, `gtol`, `ftol` | **global**            |
-| `callback(x)` argument                        | *local* slice of current iterate |
-
-### User-supplied callbacks
-
-The solvers call back into user code in a few places; each has a specific
-contract.
-
-* **Objective `fun(x) -> (energy, gradient)`** (when `jac=True`) or separate
-  `fun(x) -> energy` and `jac(x) -> gradient`:
-
-  - `energy` **must be a globally reduced scalar.** All ranks must return the
-    same number. The standard way to do this is to compute a local quantity
-    and reduce it with `pnp.sum(...).item()` (or equivalent), where `pnp` is
-    the `Reduction(comm)` wrapper. Returning a *local* energy is the single
-    most common MPI mistake: ranks will silently disagree in line-search
-    acceptance tests and the optimisation will diverge or hang.
-  - `gradient` is *local* — only the current rank's slice.
-
-* **`callback(x)`** receives the current *local* iterate. If the caller needs
-  the global state (for plotting or logging from rank 0), they must gather
-  explicitly.
-
-* **`hessp(x, d)`** (CG) returns a *local* Hessian-vector product.
-
-### Building distributed inputs
-
-Use `NuMPI.Tools.Reduction(comm)` to obtain a `pnp` object whose `sum`, `max`,
-`min`, `mean`, `dot` methods perform `MPI_Allreduce` across the communicator.
-When `mpi4py` is not installed, `NuMPI.MPIStub` provides the same interface
-with a single "rank", so the same code runs serially too.
-
-`comm` need not be an mpi4py communicator. Any object implementing
-`allreduce(array, op)` (with `op` one of `"sum"`, `"max"`, `"min"`, returning an
-array of the same shape and dtype on every rank), `compare(other)` (returning
-`"identical"`, `"congruent"`, `"similar"` or `"unequal"`), `size` and `rank` is
-accepted; muGrid's `Communicator` (e.g. `muGrid.Communicator.world()`) is one,
-and works without mpi4py. A communicator with mpi4py's `Allreduce` is driven
-through mpi4py as before.
-
-A typical setup with a communicator-provided subdomain looks like:
-
-```python
-from NuMPI.Tools import Reduction
-from NuMPI.Optimization import LinearConstraint, l_bfgs_projected
-
-pnp = Reduction(comm)
-
-# a_local: this rank's slice of the global weight vector, shape matching x
-# target: global scalar, same on every rank
-lc = LinearConstraint(a_local, target, pnp=pnp)
-
-def fun(x):                      # x is the local slice
-    # compute local integrand, then REDUCE for the scalar return
-    local_energy = 0.5 * np.sum((x - y_local) ** 2)
-    return pnp.sum(local_energy).item(), (x - y_local)   # gradient stays local
-
-res = l_bfgs_projected(fun, x0_local, lc, jac=True,
-                       bounds_lo=0.0, bounds_hi=1.0,
-                       comm=comm, gtol=1e-5)
-```
-
-The returned `res.x` is the local slice of the solution; `res.fun`,
-`res.multiplier`, and `res.max_grad` are globally reduced scalars.
-
-See `NuMPI/Optimization/__init__.py` for optimizer-specific notes and
-`test/Optimization/MPIMinimizationProblems.py::MPI_Quadratic` for a
-reference implementation of a distributed objective.
-
-FFT engines
------------
-
-`NuMPI.FFT.make_fft_engine` returns an FFT engine for a (possibly
-domain-decomposed) grid. For a single process this is `NumpyFFTEngine`, which
-needs only numpy; for multiple processes it is `muGrid.FFTEngine` (install with
-`pip install NuMPI[fft]`; muGrid must be compiled with MPI support). Both share
-muGrid's conventions:
+## Quick start
 
 ```python
 import numpy as np
-from NuMPI.FFT import make_fft_engine
+from NuMPI import MPI
+from NuMPI.IO import save_npy
+from NuMPI.Tools import Reduction
 
-engine = make_fft_engine((nx, ny), communicator=comm)
-real_field = engine.real_space_field("heights")
-fourier_field = engine.fourier_space_field("heights_q")
-real_field.p[...] = local_heights  # subdomain at engine.subdomain_locations
-engine.fft(real_field, fourier_field)  # half-complex along the first axis
-q = 2 * np.pi * (engine.fftfreq.T / pixel_size).T  # wavevectors
-engine.ifft(fourier_field, real_field)
-local_heights = real_field.p * engine.normalisation  # ifft is unnormalized
+comm = MPI.COMM_WORLD
+pnp = Reduction(comm)
+
+# Each process holds 10 rows of a global array with 10 * comm.size rows
+local = np.full((10, 4), comm.rank, dtype=float)
+print(pnp.sum(local))  # same value on every process
+
+save_npy("data.npy", local, subdomain_locations=(10 * comm.rank, 0),
+         nb_grid_pts=(10 * comm.size, 4), comm=comm)
 ```
 
-Development & Funding
----------------------
+Run it serially with `python example.py`, or in parallel with
+`mpirun -n 4 python example.py`.
+
+## Development
+
+```bash
+git clone https://github.com/muSpectre/NuMPI.git
+cd NuMPI
+pip install -e .[test]
+python -m pytest                                  # serially, with the MPI stub
+mpirun --oversubscribe -n 4 python -m pytest      # in parallel, needs mpi4py
+```
+
+## Documentation
+
+Full documentation (installation, communicators and reductions, parallel I/O,
+FFT engines, optimizers and their MPI conventions, testing utilities) is at
+**https://muspectre.github.io/NuMPI/** and in the [`docs/`](docs/) folder.
+
+## License
+
+MIT — see [LICENSE.md](LICENSE.md).
+
+## Funding
 
 Development of this project is funded by the [European Research Council](https://erc.europa.eu) within [Starting Grant 757343](https://cordis.europa.eu/project/id/757343) and by the [Deutsche Forschungsgemeinschaft](https://www.dfg.de/en) within project [EXC 2193](https://gepris.dfg.de/gepris/projekt/390951807).
