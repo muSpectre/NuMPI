@@ -2,6 +2,13 @@ Change log for NuMPI
 ===================
 
 
+v0.17.1 (27Oct26)
+-----------------
+
+- BUG: `load_npy` and `save_npy` failed for data in non-native byte order
+  (e.g. big-endian files) when mpi4py is installed; such files now load and
+  save with their data type preserved, like with `numpy.load` and `numpy.save`
+
 v0.17.0 (27Oct26)
 -----------------
 
