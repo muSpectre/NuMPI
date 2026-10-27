@@ -45,10 +45,7 @@ without muGrid installed:
 import numpy as np
 
 from . import MPI
-
-
-def _comm_size(comm):
-    return comm.Get_size() if hasattr(comm, "Get_size") else comm.size
+from .Tools.Reduction import comm_size
 
 
 class NumpyField:
@@ -116,10 +113,10 @@ class NumpyFFTEngine:
                     self._nb_domain_grid_pts))
         if communicator is None:
             communicator = MPI.COMM_SELF
-        if _comm_size(communicator) != 1:
+        if comm_size(communicator) != 1:
             raise ValueError(
                 "NumpyFFTEngine is serial, but the communicator has {} processes.".format(
-                    _comm_size(communicator)))
+                    comm_size(communicator)))
         self._communicator = communicator
         self._real_space_fields = {}
         self._fourier_space_fields = {}
@@ -325,7 +322,7 @@ def make_fft_engine(nb_domain_grid_pts, communicator=None, backend="auto", **kwa
         determined by muGrid; see the engine's ``subdomain_locations`` and
         ``nb_subdomain_grid_pts``.
     """
-    nb_processes = 1 if communicator is None else _comm_size(communicator)
+    nb_processes = 1 if communicator is None else comm_size(communicator)
     if backend == "auto":
         backend = "numpy" if nb_processes == 1 else "muGrid"
     if backend == "numpy":
