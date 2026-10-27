@@ -27,6 +27,7 @@
 import numpy as np
 import pytest
 
+from NuMPI import MPI
 from NuMPI.FFT import NumpyFFTEngine, make_fft_engine
 
 muGrid = pytest.importorskip("muGrid")
@@ -43,7 +44,7 @@ def _subdomain(array, locations, nb_grid_pts):
 @pytest.mark.parametrize("nb_grid_pts", GRIDS)
 def test_grid_information_matches_mugrid(nb_grid_pts):
     numpy_engine = NumpyFFTEngine(nb_grid_pts)
-    mugrid_engine = muGrid.FFTEngine(list(nb_grid_pts))
+    mugrid_engine = muGrid.FFTEngine(list(nb_grid_pts), communicator=MPI.COMM_SELF)
     for attr in ["spatial_dim", "nb_domain_grid_pts", "nb_subdomain_grid_pts", "subdomain_locations",
                  "nb_fourier_grid_pts", "nb_fourier_subdomain_grid_pts", "fourier_subdomain_locations"]:
         assert np.array_equal(getattr(numpy_engine, attr), getattr(mugrid_engine, attr)), attr
@@ -58,7 +59,7 @@ def test_grid_information_matches_mugrid(nb_grid_pts):
 def test_transforms_match_mugrid(nb_grid_pts, components):
     a = np.random.default_rng(0).random(components + nb_grid_pts)
     results = []
-    for engine in [NumpyFFTEngine(nb_grid_pts), muGrid.FFTEngine(list(nb_grid_pts))]:
+    for engine in [NumpyFFTEngine(nb_grid_pts), muGrid.FFTEngine(list(nb_grid_pts), communicator=MPI.COMM_SELF)]:
         real_field = engine.real_space_field("real", components=components)
         fourier_field = engine.fourier_space_field("fourier", components=components)
         assert real_field.p.shape == components + nb_grid_pts
@@ -77,6 +78,8 @@ def test_transforms_match_mugrid(nb_grid_pts, components):
 def test_make_fft_engine_mugrid_backend():
     engine = make_fft_engine((8, 6), backend="muGrid")
     assert isinstance(engine, muGrid.FFTEngine)
+    # No communicator means serial, also under an MPI launcher
+    assert engine.communicator.size == 1
 
 
 @pytest.mark.parametrize("nb_grid_pts", [(16, 12), (15, 11), (8, 9, 10)])
