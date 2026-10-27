@@ -42,13 +42,13 @@ jobs:
         mpi4py-version: [ '4.1.2' ]  # 4.1 is the first series supporting 3.14
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Set up python3 ${{ matrix.python-numpy-version[0] }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-numpy-version[0] }}
 
@@ -94,7 +94,7 @@ jobs:
           coverage report
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage.xml
           flags: mpi-${{ matrix.mpi }}
@@ -113,12 +113,12 @@ jobs:
         python-version: [ '3.12', '3.13', '3.14' ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up python3 ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
