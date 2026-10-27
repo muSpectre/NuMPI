@@ -37,8 +37,8 @@ test = [
 ]
 
 [project.urls]
-repository = "https://github.com/IMTEK-Simulation/NuMPI"
-changelog = "https://github.com/IMTEK-Simulation/NuMPI/blob/master/ChangeLog.md"
+repository = "https://github.com/muSpectre/NuMPI"
+changelog = "https://github.com/muSpectre/NuMPI/blob/main/CHANGELOG.md"
 
 [tool.coverage.run]
 source = ["NuMPI"]
