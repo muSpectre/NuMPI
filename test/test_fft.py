@@ -22,10 +22,14 @@
 # SOFTWARE.
 #
 
+import importlib.util
+
 import numpy as np
 import pytest
 
-from NuMPI.FFT import NumpyFFTEngine
+from NuMPI.FFT import NumpyFFTEngine, make_fft_engine
+
+_has_mugrid = importlib.util.find_spec("muGrid") is not None
 
 GRIDS = [(8,), (7,), (8, 6), (7, 5), (4, 6, 5), (3, 5, 4)]
 
@@ -156,3 +160,25 @@ def test_numpy_engine_requires_serial_communicator(comm):
     else:
         with pytest.raises(ValueError):
             NumpyFFTEngine((8, 6), communicator=comm)
+
+
+def test_make_fft_engine_serial(comm_self):
+    engine = make_fft_engine((8, 6))
+    assert isinstance(engine, NumpyFFTEngine)
+    engine = make_fft_engine((8, 6), communicator=comm_self)
+    assert isinstance(engine, NumpyFFTEngine)
+    assert engine.communicator is comm_self
+
+
+def test_make_fft_engine_unknown_backend():
+    with pytest.raises(ValueError):
+        make_fft_engine((8, 6), backend="fftw")
+
+
+@pytest.mark.skipif(_has_mugrid, reason="muGrid is installed")
+def test_make_fft_engine_without_mugrid(comm):
+    with pytest.raises(ImportError):
+        make_fft_engine((8, 6), backend="muGrid")
+    if comm.Get_size() > 1:
+        with pytest.raises(ImportError):
+            make_fft_engine((8, 6), communicator=comm)

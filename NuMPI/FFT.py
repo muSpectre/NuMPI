@@ -297,3 +297,48 @@ class NumpyFFTEngine:
         axes = self._axes(real_field)
         s = [self._nb_domain_grid_pts[a - len(real_field.components)] for a in axes]
         real_field.p[...] = np.fft.irfftn(fourier_field.p, s=s, axes=axes) * np.prod(self._nb_domain_grid_pts)
+
+
+def make_fft_engine(nb_domain_grid_pts, communicator=None, backend="auto", **kwargs):
+    """
+    Create an FFT engine for a (possibly domain-decomposed) grid.
+
+    Parameters
+    ----------
+    nb_domain_grid_pts : sequence of int
+        Number of grid points of the whole domain.
+    communicator : communicator, optional
+        mpi4py communicator, NuMPI stub communicator or muGrid
+        ``Communicator``. (Default: None, i.e. serial)
+    backend : str, optional
+        "numpy" for :class:`NumpyFFTEngine`, "muGrid" for
+        ``muGrid.FFTEngine``, or "auto" to use numpy for a single process and
+        muGrid for multiple processes. (Default: "auto")
+    **kwargs
+        Passed on to the engine's constructor (e.g. ``nb_ghosts_left`` or
+        ``device`` for muGrid).
+
+    Returns
+    -------
+    engine : NumpyFFTEngine or muGrid.FFTEngine
+        The FFT engine. For multiple processes, the domain decomposition is
+        determined by muGrid; see the engine's ``subdomain_locations`` and
+        ``nb_subdomain_grid_pts``.
+    """
+    nb_processes = 1 if communicator is None else _comm_size(communicator)
+    if backend == "auto":
+        backend = "numpy" if nb_processes == 1 else "muGrid"
+    if backend == "numpy":
+        return NumpyFFTEngine(nb_domain_grid_pts, communicator=communicator, **kwargs)
+    elif backend == "muGrid":
+        try:
+            import muGrid
+        except ImportError:
+            raise ImportError(
+                "Parallel FFTs (on {} processes) require muGrid; install it with `pip install NuMPI[fft]`. "
+                "muGrid must be compiled with MPI support.".format(nb_processes))
+        if communicator is not None:
+            kwargs["communicator"] = communicator
+        return muGrid.FFTEngine(list(nb_domain_grid_pts), **kwargs)
+    else:
+        raise ValueError("Unknown FFT backend '{}'; use 'auto', 'numpy' or 'muGrid'.".format(backend))
