@@ -2,8 +2,8 @@ Change log for NuMPI
 ===================
 
 
-v0.16.0 (not yet released)
---------------------------
+v0.16.0 (27Oct26)
+-----------------
 
 - ENH: `Reduction` (and with it the optimizers and `Testing.Assertions`)
   accepts communicators that are not mpi4py's, such as muGrid's
@@ -12,6 +12,9 @@ v0.16.0 (not yet released)
   communicators work as before; mpi4py is not needed for the new path.
 - API: `Reduction.any` and `Reduction.all` reduce as max/min over 0/1, which
   every communicator supports, instead of logical or/and; results are unchanged.
+- ENH: The `callback` of `l_bfgs_bounded` can stop the optimization by
+  returning `True`, which ends it as successful; use it for a custom stopping
+  criterion
 
 v0.15.2 (18Sep26)
 -----------------
