@@ -26,6 +26,11 @@ dependencies = [
 mpi = [
     "mpi4py"
 ]
+# Parallel FFTs; muGrid must be compiled with MPI support for multi-process
+# communicators (requires Python >= 3.10)
+fft = [
+    "muGrid>=1.6.0"
+]
 test = [
     "pytest",
     "pytest-cov",
