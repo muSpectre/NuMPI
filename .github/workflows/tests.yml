@@ -29,10 +29,7 @@ jobs:
         mpi: [ 'yes', 'no' ]
         scipy: [ 'yes', 'no' ]
         python-numpy-version:
-          [ [ '3.8', '1.24.4' ],  # last supported version for 3.9
-            [ '3.9', '1.26.4' ],
-            [ '3.9', '2.0.2' ],  # last supported version for 3.9
-            [ '3.10', '1.26.4' ],
+          [ [ '3.10', '1.26.4' ],
             [ '3.10', '2.2.3' ],
             [ '3.11', '1.26.4' ],
             [ '3.11', '2.2.3' ],
@@ -104,8 +101,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
-  # FFT engines against muGrid (requires Python >= 3.10); with MPI, muGrid
-  # is compiled against the same MPI library as mpi4py
+  # FFT engines against muGrid; with MPI, muGrid is compiled against the
+  # same MPI library as mpi4py
   tests-mugrid:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

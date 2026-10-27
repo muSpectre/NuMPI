@@ -2,6 +2,12 @@ Change log for NuMPI
 ===================
 
 
+v0.18.0 (not yet released)
+--------------------------
+
+- API: Requires Python 3.10 or later; support for Python 3.8 and 3.9 is
+  dropped
+
 v0.17.1 (27Oct26)
 -----------------
 

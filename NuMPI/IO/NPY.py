@@ -31,7 +31,7 @@ MPI-parallel writing of arrays in numpy's 'npy' format.
 import contextlib
 import struct
 from ast import literal_eval
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import numpy as np
 from numpy.lib.format import MAGIC_PREFIX, magic
@@ -132,7 +132,7 @@ def cast_mpi_types(
         numpy_dtype: np.dtype, nb_grid_pts: Sequence[int],
         nb_subdomain_grid_pts: Sequence[int],
         subdomain_locations: Sequence[int],
-        nb_components: Union[int, Sequence[int]],
+        nb_components: int | Sequence[int],
         fortran_order: bool, components_are_leading: bool):
 
     # get the corresponding MPI Datatype; types unknown to the MPI library
@@ -226,8 +226,8 @@ class NPYFile(MPIFileView):
             raise err
 
     def read(
-            self, subdomain_locations: Union[Sequence[int], None] = None,
-            nb_subdomain_grid_pts: Union[Sequence[int], None] = None,
+            self, subdomain_locations: Sequence[int] | None = None,
+            nb_subdomain_grid_pts: Sequence[int] | None = None,
             components_are_leading=True):
         # Figure out how many dimensions are spatial
         try:
@@ -306,8 +306,8 @@ def mpi_read_bytes(file, nbytes):
 
 
 def save_npy(
-        fn, data, subdomain_locations: Union[Sequence[int], None] = None,
-        nb_grid_pts: Union[Sequence[int], None] = None,
+        fn, data, subdomain_locations: Sequence[int] | None = None,
+        nb_grid_pts: Sequence[int] | None = None,
         components_are_leading=True, comm=MPI.COMM_WORLD):
     """
 
@@ -404,8 +404,8 @@ def save_npy(
 
 
 def load_npy(
-        fn, subdomain_locations: Union[Sequence[int], None] = None,
-        nb_subdomain_grid_pts: Union[Sequence[int], None] = None,
+        fn, subdomain_locations: Sequence[int] | None = None,
+        nb_subdomain_grid_pts: Sequence[int] | None = None,
         components_are_leading=True, comm=MPI.COMM_WORLD):
     file = NPYFile(fn, comm)
     data = file.read(subdomain_locations, nb_subdomain_grid_pts, components_are_leading)
