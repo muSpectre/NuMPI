@@ -139,15 +139,16 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
     **MPI contract.** ``x0``, ``bounds``, and ``linear_constraint.a`` are
     *local* per-rank slices; the gradient returned by ``fun`` is local; the
     scalar energy returned by ``fun`` (if any) and ``linear_constraint.target``
-    are **global**. See the "MPI Conventions" section of the top-level README
-    for details and a worked example.
+    are **global**. See the MPI conventions in the documentation for details
+    and a worked example: https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
 
     References
     ----------
     .. [1] Bugnicourt, Romain & Sainsot, Philippe & Dureisseix, David &
         Gauthier, Catherine & Lubrecht, Ton. (2018). FFT-Based Methods
         for Solving a Rough Adhesive Contact: Description and
-        Convergence Study. Tribology International, 121, 200-209.
+        Convergence Study. Tribology Letters, 66, 29.
+        https://doi.org/10.1007/s11249-017-0980-z
     """
     if communicator is None:
         comm = np

@@ -174,8 +174,9 @@ def l_bfgs_projected(
     ``linear_constraint.target`` are **global** (same on every rank). The
     scalar energy in particular must be globally reduced before being
     returned — otherwise ranks disagree in the Armijo acceptance test and
-    the iterates diverge silently across ranks. See the "MPI Conventions"
-    section of the top-level README for details and a worked example.
+    the iterates diverge silently across ranks. See the MPI conventions in
+    the documentation for details and a worked example:
+    https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
     """
     if comm is not None:
         if pnp is not None:
