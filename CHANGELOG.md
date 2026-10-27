@@ -2,6 +2,20 @@ Change log for NuMPI
 ===================
 
 
+v0.17.0 (27Oct26)
+-----------------
+
+- ENH: `NuMPI.FFT` with FFT engines that share the interface and conventions
+  of muGrid's `FFTEngine` (muGrid >= 1.6.0). `NumpyFFTEngine` runs serially
+  on 1D, 2D and 3D grids and needs only numpy; `make_fft_engine` returns it
+  for a single process and muGrid's engine for multiple processes, so codes
+  written for muGrid's FFTs run serially without muGrid installed.
+- ENH: `Testing.Fixtures.MPITestFixture` falls back to the MPI stub if mpi4py
+  is not installed, so downstream test suites no longer need their own
+  fallback; new `serial_only` marker for tests that must run on one process
+- BUILD: New `fft` extra installing muGrid (requires Python >= 3.10); muGrid
+  must be compiled with MPI support for parallel FFTs
+
 v0.16.0 (27Oct26)
 -----------------
 

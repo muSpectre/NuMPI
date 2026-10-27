@@ -24,21 +24,9 @@
 #
 
 
-import pytest
-
-import NuMPI
 from NuMPI.Testing.Fixtures import MPITestFixture
 
-if NuMPI._has_mpi4py:
-    comm = MPITestFixture([1, 2, 3, 4, 10], scope="session")
-    # pass this to a test that should only be run on one processor
-    comm_self = MPITestFixture([1], scope="session")
-else:
-
-    @pytest.fixture(scope="session")
-    def comm():
-        return NuMPI.MPI.COMM_WORLD
-
-    @pytest.fixture(scope="session")
-    def comm_self():
-        return NuMPI.MPI.COMM_WORLD
+# Falls back to NuMPI's MPI stub if mpi4py is not installed
+comm = MPITestFixture([1, 2, 3, 4, 10], scope="session")
+# pass this to a test that should only be run on one processor
+comm_self = MPITestFixture([1], scope="session")

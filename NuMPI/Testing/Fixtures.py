@@ -1,9 +1,14 @@
 import pytest
 
+from .. import MPI
+
 #
 # This is adopted from runtests:
 # https://github.com/bccp/runtests
 # BSD-2-Clause License
+#
+# `MPI` is mpi4py's or, if mpi4py is not installed, NuMPI's stub; with the
+# stub, the world has a single process and only fixtures of size one run.
 #
 
 communicators = {}
@@ -14,8 +19,6 @@ class WorldTooSmall(Exception):
 
 
 def create_comm(size):
-    from mpi4py import MPI
-
     if MPI.COMM_WORLD.size < size:
         raise WorldTooSmall
 
@@ -37,8 +40,6 @@ def MPITestFixture(commsize, scope="function"):
 
     @pytest.fixture(params=commsize, scope=scope)
     def fixture(request):
-        from mpi4py import MPI
-
         MPI.COMM_WORLD.barrier()
         try:
             comm, color = create_comm(request.param)
@@ -54,3 +55,9 @@ def MPITestFixture(commsize, scope="function"):
             return None
 
     return fixture
+
+
+serial_only = pytest.mark.skipif(
+    MPI.COMM_WORLD.Get_size() > 1,
+    reason="Test runs on a single process only; run it with pytest instead of mpirun")
+"""Marker for tests that must not run under MPI with multiple processes"""
