@@ -337,8 +337,8 @@ def make_fft_engine(nb_domain_grid_pts, communicator=None, backend="auto", **kwa
             raise ImportError(
                 "Parallel FFTs (on {} processes) require muGrid; install it with `pip install NuMPI[fft]`. "
                 "muGrid must be compiled with MPI support.".format(nb_processes))
-        # muGrid defaults to its world communicator under an MPI launcher, but
-        # here None means serial
+        # None means serial; say so explicitly, since muGrid warns about
+        # redundant work for serial engines created under an MPI launcher
         kwargs["communicator"] = MPI.COMM_SELF if communicator is None else communicator
         return muGrid.FFTEngine(list(nb_domain_grid_pts), **kwargs)
     else:
