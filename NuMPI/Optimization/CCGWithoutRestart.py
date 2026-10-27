@@ -147,7 +147,8 @@ def constrained_conjugate_gradients(fun, hessp, x0, args=(), jac=True,
     .. [1] Bugnicourt, Romain & Sainsot, Philippe & Dureisseix, David &
         Gauthier, Catherine & Lubrecht, Ton. (2018). FFT-Based Methods
         for Solving a Rough Adhesive Contact: Description and
-        Convergence Study. Tribology International, 121, 200-209.
+        Convergence Study. Tribology Letters, 66, 29.
+        https://doi.org/10.1007/s11249-017-0980-z
     """
     if communicator is None:
         comm = np
