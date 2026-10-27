@@ -37,6 +37,7 @@ test = [
 ]
 
 [project.urls]
+documentation = "https://muspectre.github.io/NuMPI/"
 repository = "https://github.com/muSpectre/NuMPI"
 changelog = "https://github.com/muSpectre/NuMPI/blob/main/CHANGELOG.md"
 
