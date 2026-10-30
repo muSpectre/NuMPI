@@ -90,6 +90,61 @@ def test_unbounded_quadratic():
     assert res.nit <= 10
 
 
+def _ill_conditioned_quadratic(scale, N=64):
+    """``scale * 0.5 sum(w_i (x_i - y_i)^2)`` with spread curvatures, so the
+    Steihaug CG needs several iterations and its tolerance matters."""
+    rng = np.random.default_rng(3)
+    w = np.logspace(0, 3, N)
+    y = rng.normal(size=N)
+    hessps = []
+
+    def fun_grad(x):
+        d = x - y
+        return scale * 0.5 * float(np.sum(w * d * d)), scale * w * d
+
+    def hessp(x, v, tol=None):
+        hessps.append(tol)
+        return scale * w * v
+
+    return fun_grad, hessp, hessps, y
+
+
+def test_forcing_does_not_depend_on_objective_units():
+    """Scaling the objective (and so gradient and Hessian) by a constant must
+    not change the iterates: the default Steihaug tolerance is relative to
+    the first projected gradient. On ||g|| itself, a 1e-6 scale demanded a
+    near-exact subproblem from the first iteration and took more products.
+    The scale is a power of two, so that the scaled arithmetic is exact."""
+    results = []
+    for scale in (1.0, 2.0**-20):
+        fun_grad, hessp, hessps, y = _ill_conditioned_quadratic(scale)
+        res = tr_newton_bounded(fun_grad, np.zeros_like(y), hessp, jac=True,
+                                gtol=1e-8 * scale, delta_max=100.0)
+        assert res.success, res.message
+        np.testing.assert_allclose(res.x, y, atol=1e-6)
+        results.append((res.nit, res.nb_hessp, res.x))
+    (nit_a, nh_a, x_a), (nit_b, nh_b, x_b) = results
+    assert (nit_a, nh_a) == (nit_b, nh_b)
+    np.testing.assert_allclose(x_a, x_b, rtol=1e-10, atol=1e-12)
+
+
+def test_hessp_tol_passes_the_steihaug_tolerance():
+    fun_grad, hessp, hessps, y = _ill_conditioned_quadratic(1.0)
+    res = tr_newton_bounded(fun_grad, np.zeros_like(y), hessp, jac=True,
+                            gtol=1e-8, delta_max=100.0, hessp_tol=True)
+    assert res.success, res.message
+    assert len(hessps) == res.nb_hessp
+    # The first subproblem is solved to 0.5, then the forcing tightens
+    assert hessps[0] == 0.5
+    assert all(0.0 <= t <= 0.5 for t in hessps)
+    assert min(hessps) < 0.5
+    # Without the option, hessp is called without a tolerance
+    fun_grad, hessp, hessps, y = _ill_conditioned_quadratic(1.0)
+    tr_newton_bounded(fun_grad, np.zeros_like(y), hessp, jac=True,
+                      gtol=1e-8, delta_max=100.0)
+    assert set(hessps) == {None}
+
+
 def test_box_matches_clip():
     """Box-constrained ill-conditioned quadratic: minimiser is clip(y)."""
     rng = np.random.default_rng(1)
