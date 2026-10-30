@@ -29,6 +29,7 @@ through the caller-supplied ``pnp`` reduction wrapper.
 """
 
 import numpy as np
+from array_api_compat import array_namespace
 
 
 def _twoloop_direction(g, s_hist, y_hist, rho_hist, pnp):
@@ -65,13 +66,16 @@ def _kkt_residual(grad, x, lo, hi, zero_mask=None, tol_box=1e-12):
     or a tangent-projected gradient (linear-equality + box case); the mask
     logic is the same.
     """
-    r = grad.copy()
+    # In the arrays' own namespace (numpy, cupy, ...), so that a device
+    # gradient stays on the device
+    xp = array_namespace(grad, x)
+    r = xp.asarray(grad, copy=True)
     if zero_mask is not None:
-        r = np.where(zero_mask, 0.0, r)
+        r = xp.where(zero_mask, 0.0, r)
     if lo is not None:
-        r = np.where((x <= lo + tol_box) & (grad >= 0.0), 0.0, r)
+        r = xp.where((x <= lo + tol_box) & (grad >= 0.0), 0.0, r)
     if hi is not None:
-        r = np.where((x >= hi - tol_box) & (grad <= 0.0), 0.0, r)
+        r = xp.where((x >= hi - tol_box) & (grad <= 0.0), 0.0, r)
     return r
 
 

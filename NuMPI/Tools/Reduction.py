@@ -23,7 +23,10 @@
 # SOFTWARE.
 #
 
+import math
+
 import numpy as np
+from array_api_compat import array_namespace
 
 from .. import MPI
 
@@ -83,6 +86,40 @@ def _is_mpi4py_like(comm):
 def comm_size(comm):
     """Number of ranks of an mpi4py-like or protocol communicator."""
     return comm.Get_size() if hasattr(comm, "Get_size") else comm.size
+
+
+def _is_numpy_input(a):
+    """NumPy arrays and scalars, and anything else that is not an array of
+    another array-API namespace (Python numbers, lists), take the NumPy path
+    of :class:`Reduction`."""
+    return (isinstance(a, (np.ndarray, np.generic))
+            or not hasattr(a, "__array_namespace__"))
+
+
+def _local_scalar(npop, arr):
+    """The full local reduction `npop` (np.sum, np.max or np.min) of an array
+    of another namespace (cupy, ...), computed in that namespace and brought
+    to the host as the one number it is."""
+    xp = array_namespace(arr)
+    ops = {np.sum: xp.sum, np.max: xp.max, np.min: xp.min}
+    if npop not in ops:
+        raise NotImplementedError(
+            f"{getattr(npop, '__name__', npop)} of non-NumPy arrays")
+    if npop is not np.sum and math.prod(arr.shape) == 0:
+        # An empty local array contributes the identity of max/min, as the
+        # dtype extremes passed as ``initial`` on the NumPy path
+        info = (xp.finfo(arr.dtype)
+                if xp.isdtype(arr.dtype, "real floating")
+                else xp.iinfo(arr.dtype))
+        return info.min if npop is np.max else info.max
+    local = ops[npop](arr)
+    if xp.isdtype(local.dtype, "bool"):
+        return bool(local)
+    if xp.isdtype(local.dtype, "integral"):
+        return int(local)
+    if xp.isdtype(local.dtype, "complex floating"):
+        return complex(local)
+    return float(local)
 
 
 def _protocol_allreduce(comm, local, op):
@@ -245,6 +282,16 @@ class Reduction:
             # Max/min on masked array do not support `initial`
             arr = arr.filled(kwargs['initial'])
             del kwargs['initial']
+        if not _is_numpy_input(arr):
+            # An array of another namespace (e.g. cupy on a GPU): reduced
+            # locally where it lives; only the result reaches the host. Only
+            # full reductions are supported -- there is no portable way to
+            # bring a whole array of an arbitrary namespace to the host.
+            if args or kwargs:
+                raise NotImplementedError(
+                    "reductions of non-NumPy arrays support only full "
+                    "reductions, without further arguments")
+            arr = np.asarray(_local_scalar(npop, arr))
         return self._op(npop, (arr,), mpiop, *args, **kwargs)
 
     def sum(self, arr, *args, **kwargs):
@@ -295,7 +342,8 @@ class Reduction:
         Uses an initial value of dtype.min to handle empty local arrays
         correctly (an empty array contributes the smallest possible value).
         """
-        kwargs['initial'] = get_dtype_info(arr.dtype).min
+        if _is_numpy_input(arr):
+            kwargs['initial'] = get_dtype_info(arr.dtype).min
         return self._op1(np.max, arr, "max", *args, **kwargs)
 
     def min(self, arr, *args, **kwargs):
@@ -323,7 +371,8 @@ class Reduction:
         Uses an initial value of dtype.max to handle empty local arrays
         correctly (an empty array contributes the largest possible value).
         """
-        kwargs['initial'] = get_dtype_info(arr.dtype).max
+        if _is_numpy_input(arr):
+            kwargs['initial'] = get_dtype_info(arr.dtype).max
         return self._op1(np.min, arr, "min", *args, **kwargs)
 
     def mean(self, arr, *args, **kwargs):
@@ -353,6 +402,9 @@ class Reduction:
         by computing sum(arr) / sum(ones_like(arr)) rather than averaging
         local means.
         """
+        if not _is_numpy_input(arr):
+            return self.sum(arr, *args, **kwargs) / self.sum(
+                np.asarray(float(math.prod(arr.shape))))
         return self.sum(arr, *args, **kwargs) / self.sum(np.ones_like(arr), *args, **kwargs)
 
     def dot(self, a, b, *args, **kwargs):
@@ -382,6 +434,9 @@ class Reduction:
         arrays, this computes the mathematically correct global dot product
         by summing local contributions.
         """
+        if not (_is_numpy_input(a) and _is_numpy_input(b)):
+            raise NotImplementedError(
+                "dot of non-NumPy arrays; use sum(a * b)")
         return self._op(np.dot, (a, b), "sum", *args, **kwargs)
 
     def any(self, arr, *args, **kwargs):
@@ -445,6 +500,14 @@ class Reduction:
         """``any``/``all``: the local test as 0/1 in int32, reduced with
         ``op`` ("max" or "min") and returned as bool."""
         def local(a, *args, **kwargs):
+            if not _is_numpy_input(a):
+                if args or kwargs:
+                    raise NotImplementedError(
+                        "reductions of non-NumPy arrays support only full "
+                        "reductions, without further arguments")
+                xp = array_namespace(a)
+                test = xp.any if npop is np.any else xp.all
+                return np.asarray(int(bool(test(a))), dtype=np.int32)
             return np.asarray(npop(a, *args, **kwargs)).astype(np.int32)
 
         return self._op(local, (arr,), op, *args, **kwargs).astype(bool)

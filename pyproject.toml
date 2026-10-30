@@ -19,7 +19,10 @@ requires-python = ">=3.10.0"
 dynamic = ["version"]
 dependencies = [
     "scipy>1.1.0",
-    "primefac"
+    "primefac",
+    # The trust region runs on arrays of any array-API namespace (numpy,
+    # cupy, ...) in their own namespace and on their own device
+    "array-api-compat>=1.12",
 ]
 
 [project.optional-dependencies]
@@ -31,9 +34,18 @@ mpi = [
 fft = [
     "muGrid>=1.6.0"
 ]
+# CuPy arrays for the GPU (the tests use it when a GPU is present). The
+# generic package builds from source; a prebuilt wheel (cupy-cuda12x,
+# cupy-rocm-...) installed instead serves as well.
+gpu = [
+    "cupy",
+]
 test = [
     "pytest",
     "pytest-cov",
+    # Arrays on a non-CPU device that refuse conversion to NumPy, so the
+    # array-namespace code is checked on the CPU too
+    "array-api-strict>=2.6",
 ]
 
 [project.urls]

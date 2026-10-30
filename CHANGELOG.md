@@ -2,6 +2,17 @@ Change log for NuMPI
 ===================
 
 
+v0.19.0 (not yet released)
+--------------------------
+
+- ENH: `tr_newton_bounded` works on arrays of any array-API namespace, e.g. CuPy
+  arrays on a GPU: the iteration stays in the namespace and on the device of `x0`,
+  and only reduced scalars come to the host
+- ENH: `Reduction` reduces arrays of other namespaces completely in their own
+  namespace and returns the result on the host
+- ENH: `gpu` extra (CuPy); a GPU CI job tests the trust region on CuPy arrays
+- BUILD: Requires array-api-compat
+
 v0.18.0 (30Oct26)
 -----------------
 
