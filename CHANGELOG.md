@@ -2,6 +2,17 @@ Change log for NuMPI
 ===================
 
 
+v0.18.0 (not yet released)
+--------------------------
+
+- BUG: The default Steihaug tolerance of `tr_newton_bounded` is measured relative to
+  the projected gradient at the first iterate, so it no longer depends on the units
+  of the objective; for gradients of order 1/N it had demanded a nearly exact
+  subproblem solve from the first iteration on
+- ENH: `tr_newton_bounded(hessp_tol=True)` passes the Steihaug tolerance to
+  `hessp`, so an inexactly evaluated Hessian product need only be as accurate as
+  the subproblem it serves
+
 v0.17.1 (27Oct26)
 -----------------
 

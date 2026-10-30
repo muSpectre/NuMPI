@@ -186,6 +186,7 @@ def tr_newton_bounded(
     eta=0.1,
     inner_tol=None,
     inner_maxiter=None,
+    hessp_tol=False,
     fun_error=None,
     request_accuracy=None,
     eta_f=0.25,
@@ -238,10 +239,18 @@ def tr_newton_bounded(
     inner_tol : float, optional
         Relative residual tolerance of the Steihaug CG. ``None`` (default)
         uses the superlinear forcing sequence
-        ``min(0.5, sqrt(||g_free||))`` (Nocedal & Wright, p. 169).
+        ``min(0.5, sqrt(||g_free|| / ||g_free,0||))`` (Nocedal & Wright,
+        p. 169), with the norms relative to that at the first iterate so
+        that the sequence does not depend on the units of the objective.
     inner_maxiter : int, optional
         Iteration cap of the Steihaug CG. Default: number of global degrees
         of freedom (i.e. effectively uncapped).
+    hessp_tol : bool, optional
+        If ``True``, ``hessp`` is called as ``hessp(x, v, *args, tol=tol)``
+        with ``tol`` the relative residual tolerance of the Steihaug CG that
+        requests the product. A Hessian-vector product that is itself
+        evaluated inexactly (e.g. by an inner iterative solve) can then be
+        made only as accurate as the subproblem needs. Default ``False``.
     fun_error : callable, optional
         ``fun_error()`` returns a computable bound on the absolute error of
         the most recent ``fun`` evaluation (e.g. an adjoint-weighted residual
@@ -312,9 +321,11 @@ def tr_newton_bounded(
             xr = x.reshape(original_shape)
             return fun(xr, *args), np.asarray(jac(xr, *args)).ravel()
 
-    def hessp_flat(x, v):
+    def hessp_flat(x, v, tol):
+        kwargs = {"tol": tol} if hessp_tol else {}
         return np.asarray(
-            hessp(x.reshape(original_shape), v.reshape(original_shape), *args)
+            hessp(x.reshape(original_shape), v.reshape(original_shape), *args,
+                  **kwargs)
         ).ravel()
 
     def project(y):
@@ -339,6 +350,9 @@ def tr_newton_bounded(
     phi, grad = fun_grad(x)
 
     nb_hessp_total = 0
+    # Projected-gradient norm at the first iterate, the reference of the
+    # forcing sequence
+    r_norm0 = None
     delta_history = []
     rho_history = []
 
@@ -386,12 +400,19 @@ def tr_newton_bounded(
 
         free = _free_mask(grad, x, bounds_lo, bounds_hi, zero_mask)
 
-        def hessp_free(v):
-            return np.where(free, hessp_flat(x, np.where(free, v, 0.0)), 0.0)
-
+        # The forcing sequence on the *relative* projected gradient: on
+        # ||g|| itself it would depend on the units of the objective -- for
+        # an objective scaled by 1/N, it would demand a nearly exact
+        # subproblem solve from the first iteration on.
+        if r_norm0 is None:
+            r_norm0 = r_norm
         tol_k = (
-            min(0.5, np.sqrt(r_norm)) if inner_tol is None else inner_tol
-        )
+            min(0.5, np.sqrt(r_norm / r_norm0)) if r_norm0 > 0 else 0.0
+        ) if inner_tol is None else inner_tol
+
+        def hessp_free(v):
+            return np.where(
+                free, hessp_flat(x, np.where(free, v, 0.0), tol_k), 0.0)
         s, pred, on_boundary, status, nb_hessp = _steihaug_cg(
             hessp_free, r_free, delta, tol_k, inner_maxiter, pnp
         )
