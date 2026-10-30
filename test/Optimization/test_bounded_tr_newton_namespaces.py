@@ -55,7 +55,9 @@ class Backend:
 
     def to_numpy(self, a):
         if self.name == "array_api_strict":
-            return np.asarray(a.to_device(self.xp.Device("CPU_DEVICE")))
+            # Through DLPack: array_api_strict's to_device uses the copy
+            # keyword of np.asarray, which NumPy 1.x does not have
+            return np.from_dlpack(a)
         if self.name == "cupy":
             return a.get()
         return np.asarray(a)
