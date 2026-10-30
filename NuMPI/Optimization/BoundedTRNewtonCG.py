@@ -69,8 +69,11 @@ through the caller-supplied ``pnp``.
 """
 
 import logging
+import math
 
 import numpy as np
+from array_api_compat import array_namespace
+from array_api_compat import device as array_device
 
 from ..Tools import Reduction
 from ._lbfgs_helpers import _kkt_residual
@@ -83,7 +86,8 @@ def _free_mask(grad, x, lo, hi, zero_mask, tol_box=1e-12):
     """Boolean mask of the *free* variables: not pinned, and not sitting on an
     active box face with the gradient pointing further into it (the complement
     of the components :func:`_kkt_residual` zeroes)."""
-    free = np.ones(x.shape, dtype=bool)
+    xp = array_namespace(x)
+    free = xp.ones(x.shape, dtype=xp.bool, device=array_device(x))
     if zero_mask is not None:
         free &= ~zero_mask
     if lo is not None:
@@ -98,9 +102,26 @@ def _to_boundary(s, d, sds, dds, sdd, delta):
 
     ``sds = sᵀs``, ``dds = dᵀd``, ``sdd = sᵀd`` are the (already reduced)
     dot products. Returns ``(tau_minus, tau_plus)`` with
-    ``tau_minus <= tau_plus``."""
-    tmp = np.sqrt(max(sdd * sdd - dds * (sds - delta * delta), 0.0))
+    ``tau_minus <= tau_plus``. Python floats, not NumPy scalars: a NumPy
+    scalar times an array of another namespace would try to convert the
+    array to NumPy."""
+    tmp = math.sqrt(max(sdd * sdd - dds * (sds - delta * delta), 0.0))
     return (-sdd - tmp) / dds, (-sdd + tmp) / dds
+
+
+class _HostScalars:
+    """The global reductions of `pnp` as Python floats: in the iteration only
+    these single numbers cross to the host, whatever the arrays' namespace
+    (numpy, cupy, ...) and device."""
+
+    def __init__(self, pnp):
+        self._pnp = pnp
+
+    def sum(self, a):
+        return float(self._pnp.sum(a))
+
+    def max(self, a):
+        return float(self._pnp.max(a))
 
 
 def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp):
@@ -118,12 +139,13 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp):
     trust-region crossing during a positive-curvature step the positive root
     is the minimizer along ``d``.
     """
-    s = np.zeros_like(g_free)
-    Bs = np.zeros_like(g_free)  # running B s, for cheap model evaluations
-    r = g_free.copy()  # residual of grad m = g + B s at s = 0
+    xp = array_namespace(g_free)
+    s = xp.zeros_like(g_free)
+    Bs = xp.zeros_like(g_free)  # running B s, for cheap model evaluations
+    r = xp.asarray(g_free, copy=True)  # residual of grad m = g + B s at s = 0
     d = -r
     rr = pnp.sum(r * r)
-    g_norm = np.sqrt(rr)
+    g_norm = math.sqrt(rr)
     if g_norm == 0.0:
         return s, 0.0, False, "zero gradient", 0
     rtol2 = (tol * g_norm) ** 2
@@ -207,8 +229,12 @@ def tr_newton_bounded(
         must return ``(energy, gradient)``. If ``jac`` is a callable,
         ``fun`` returns only the energy and ``jac(x, *args)`` returns the
         gradient.
-    x0 : ndarray
-        Initial guess (any shape; local per-rank slice). Projected onto the
+    x0 : array
+        Initial guess (any shape; local per-rank slice) of any array-API
+        namespace, e.g. a NumPy or a CuPy array. The iteration runs in that
+        namespace and on that device: ``fun``, ``hessp`` and ``callback``
+        receive such arrays, and the result's ``x`` and ``jac`` are such
+        arrays; only reduced scalars come to the host. Projected onto the
         feasible set before the loop starts.
     hessp : callable
         Matrix-free model Hessian: ``hessp(x, v, *args)`` returns ``B v`` for
@@ -267,7 +293,9 @@ def tr_newton_bounded(
     max_accuracy_retries : int, optional
         Maximum tighten-and-re-evaluate rounds per iteration. Default 5.
     comm, pnp : MPI.Comm or Reduction, optional
-        MPI communicator or pre-built reduction wrapper. Pass one, not both.
+        MPI communicator or pre-built reduction wrapper. Pass one, not both;
+        without either the run is serial. ``pnp.sum``/``pnp.max`` must
+        accept arrays of the namespace of ``x0`` (:class:`Reduction` does).
     callback : callable, optional
         ``callback(x)`` called after each *accepted* iterate.
     disp : bool, optional
@@ -294,56 +322,70 @@ def tr_newton_bounded(
             raise RuntimeError("Please specify either `comm` or `pnp`, not both.")
         pnp = Reduction(comm)
     elif pnp is None:
-        pnp = np
+        pnp = Reduction()
+    red = _HostScalars(pnp)
 
-    original_shape = np.asarray(x0).shape
+    # The iteration runs in the namespace and on the device of x0 (numpy,
+    # cupy, ...): the iterate, the gradient, the free mask, the bounds and
+    # the Steihaug vectors stay there, and fun and hessp get and return such
+    # arrays. Only the reduced scalars come to the host.
+    if not hasattr(x0, "shape"):
+        x0 = np.asarray(x0)
+    xp = array_namespace(x0)
+    dev = array_device(x0)
+    original_shape = tuple(x0.shape)
 
     def _flat(a):
-        return a if (a is None or np.isscalar(a)) else np.asarray(a).ravel()
+        if a is None or np.isscalar(a):
+            return a
+        return xp.reshape(xp.asarray(a, device=dev), (-1,))
 
     bounds_lo = _flat(bounds_lo)
     bounds_hi = _flat(bounds_hi)
     zero_mask = (
-        None if zero_mask is None else np.asarray(zero_mask).ravel().astype(bool)
+        None if zero_mask is None else xp.astype(_flat(zero_mask), xp.bool)
     )
+
+    def _shaped(a):
+        return xp.reshape(a, original_shape)
+
+    def _flat_result(a):
+        return xp.reshape(xp.asarray(a), (-1,))
 
     if jac is True or jac is None:
 
         def fun_grad(x):
-            phi, g = fun(x.reshape(original_shape), *args)
-            return phi, np.asarray(g).ravel()
+            phi, g = fun(_shaped(x), *args)
+            return float(phi), _flat_result(g)
 
     elif jac is False:
         raise NotImplementedError("Numerical evaluation of gradient not implemented")
     else:
 
         def fun_grad(x):
-            xr = x.reshape(original_shape)
-            return fun(xr, *args), np.asarray(jac(xr, *args)).ravel()
+            xr = _shaped(x)
+            return float(fun(xr, *args)), _flat_result(jac(xr, *args))
 
     def hessp_flat(x, v, tol):
         kwargs = {"tol": tol} if hessp_tol else {}
-        return np.asarray(
-            hessp(x.reshape(original_shape), v.reshape(original_shape), *args,
-                  **kwargs)
-        ).ravel()
+        return _flat_result(hessp(_shaped(x), _shaped(v), *args, **kwargs))
 
     def project(y):
-        if bounds_lo is None and bounds_hi is None:
-            z = np.asarray(y, dtype=float)
-        else:
-            z = np.clip(y, bounds_lo, bounds_hi)
+        z = y
+        if bounds_lo is not None or bounds_hi is not None:
+            z = xp.clip(z, bounds_lo, bounds_hi)
         if zero_mask is not None:
-            z = np.where(zero_mask, 0.0, z)
+            z = xp.where(zero_mask, 0.0, z)
         return z
 
-    x = project(np.asarray(x0, dtype=float).ravel())
+    x = project(xp.reshape(xp.asarray(x0, dtype=xp.float64, device=dev),
+                           (-1,)))
 
     # Global degree-of-freedom count: converts the RMS radius parameters to
     # Euclidean radii and caps the inner CG.
-    n_global = int(pnp.sum(np.full(1, float(x.size))))
-    delta = float(delta0) * np.sqrt(n_global)
-    delta_cap = float(delta_max) * np.sqrt(n_global)
+    n_global = int(red.sum(np.full(1, float(math.prod(x.shape)))))
+    delta = float(delta0) * math.sqrt(n_global)
+    delta_cap = float(delta_max) * math.sqrt(n_global)
     if inner_maxiter is None:
         inner_maxiter = n_global
 
@@ -360,9 +402,9 @@ def tr_newton_bounded(
         return OptimizeResult(
             {
                 "success": bool(success),
-                "x": np.asarray(x).reshape(original_shape),
+                "x": _shaped(x),
                 "fun": phi,
-                "jac": np.asarray(grad).reshape(original_shape),
+                "jac": _shaped(grad),
                 "nit": int(nit),
                 "message": message,
                 "max_grad": float(r_norm),
@@ -383,7 +425,7 @@ def tr_newton_bounded(
         r_free = _kkt_residual(
             grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
         )
-        r_norm = pnp.max(np.abs(r_free))
+        r_norm = red.max(xp.abs(r_free))
         # First-order optimality, tested unconditionally (Conn, Gould &
         # Toint, Alg. 6.1.1). The KKT residual is evaluated at the current
         # iterate and does not depend on the trust region, so a step that
@@ -407,14 +449,14 @@ def tr_newton_bounded(
         if r_norm0 is None:
             r_norm0 = r_norm
         tol_k = (
-            min(0.5, np.sqrt(r_norm / r_norm0)) if r_norm0 > 0 else 0.0
+            min(0.5, math.sqrt(r_norm / r_norm0)) if r_norm0 > 0 else 0.0
         ) if inner_tol is None else inner_tol
 
         def hessp_free(v):
-            return np.where(
-                free, hessp_flat(x, np.where(free, v, 0.0), tol_k), 0.0)
+            return xp.where(
+                free, hessp_flat(x, xp.where(free, v, 0.0), tol_k), 0.0)
         s, pred, on_boundary, status, nb_hessp = _steihaug_cg(
-            hessp_free, r_free, delta, tol_k, inner_maxiter, pnp
+            hessp_free, r_free, delta, tol_k, inner_maxiter, red
         )
         nb_hessp_total += nb_hessp
 
@@ -422,7 +464,7 @@ def tr_newton_bounded(
             # The model predicts no reduction (numerically degenerate
             # subproblem). Shrink and retry; if the region collapses, stop.
             delta *= 0.25
-            delta_history.append(delta / np.sqrt(n_global))
+            delta_history.append(delta / math.sqrt(n_global))
             rho_history.append(np.nan)
             if delta < 1e-14 * delta_cap:
                 return _finish(
@@ -435,15 +477,15 @@ def tr_newton_bounded(
         # Projection may clip the step at the box; the model reduction must
         # be measured for the step actually taken.
         s_eff = x_try - x
-        if pnp.max(np.abs(s_eff - s)) > 0.0:
+        if red.max(xp.abs(s_eff - s)) > 0.0:
             Bs = hessp_free(s_eff)
             nb_hessp_total += 1
             pred = -(
-                pnp.sum(r_free * s_eff) + 0.5 * pnp.sum(s_eff * Bs)
+                red.sum(r_free * s_eff) + 0.5 * red.sum(s_eff * Bs)
             )
             if pred <= 0.0:
                 delta *= 0.25
-                delta_history.append(delta / np.sqrt(n_global))
+                delta_history.append(delta / math.sqrt(n_global))
                 rho_history.append(np.nan)
                 if delta < 1e-14 * delta_cap:
                     return _finish(
@@ -494,21 +536,21 @@ def tr_newton_bounded(
             delta *= 0.25
         elif rho > 0.75 and on_boundary:
             delta = min(2.0 * delta, delta_cap)
-        delta_history.append(delta / np.sqrt(n_global))
+        delta_history.append(delta / math.sqrt(n_global))
         rho_history.append(float(rho))
 
         accepted = rho >= eta
-        if disp and (comm is None or pnp is np or comm.rank == 0):
+        if disp and (comm is None or comm.rank == 0):
             print(
                 f"{iteration:<5d} {phi:<14.6e} {r_norm:<14.4e} "
-                f"{delta / np.sqrt(n_global):<10.3e} {rho:<10.3g} "
+                f"{delta / math.sqrt(n_global):<10.3e} {rho:<10.3g} "
                 f"{nb_hessp:<5d} {'acc' if accepted else 'rej':<6}"
             )
 
         if accepted:
             x, phi, grad = x_try, phi_try, grad_try
             if callback is not None:
-                callback(x.reshape(original_shape))
+                callback(_shaped(x))
         else:
             if delta < 1e-14 * delta_cap:
                 return _finish(
@@ -519,7 +561,7 @@ def tr_newton_bounded(
     r_free = _kkt_residual(
         grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask
     )
-    r_norm = pnp.max(np.abs(r_free))
+    r_norm = red.max(xp.abs(r_free))
     if r_norm < gtol:
         return _finish(
             True, maxiter, r_norm,

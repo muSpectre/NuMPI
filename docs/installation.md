@@ -6,8 +6,8 @@
 pip install NuMPI
 ```
 
-NuMPI requires Python 3.10 or later and depends only on numpy, scipy and
-primefac. Without mpi4py, NuMPI uses its [MPI stub](mpi.md#the-mpi-stub) and
+NuMPI requires Python 3.10 or later and depends only on numpy, scipy,
+primefac and array-api-compat. Without mpi4py, NuMPI uses its [MPI stub](mpi.md#the-mpi-stub) and
 runs serially.
 
 ## Optional dependencies
@@ -16,7 +16,12 @@ runs serially.
 |-------|----------|------------|
 | `mpi` | mpi4py | running in parallel under `mpirun` |
 | `fft` | muGrid (>= 1.6.0) | [FFTs](fft.md) of domain-decomposed grids |
-| `test` | pytest, pytest-cov | running the test suite |
+| `gpu` | CuPy | [optimization on the GPU](optimization.md#arrays-on-the-gpu) |
+| `test` | pytest, pytest-cov, array-api-strict | running the test suite |
+
+The `gpu` extra installs the generic `cupy` package, which compiles from
+source. A prebuilt CuPy wheel for your platform (e.g. `cupy-cuda12x` or
+`cupy-rocm-6-0`) installed instead works as well.
 
 ```bash
 pip install NuMPI[mpi,fft]

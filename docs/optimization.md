@@ -152,9 +152,9 @@ drops below `gtol`, or when the largest change of an entry of $x$ drops below
 tr_newton_bounded(fun, x0, hessp, args=(), jac=None, bounds_lo=None,
                   bounds_hi=None, zero_mask=None, gtol=1e-5, maxiter=200,
                   delta0=0.05, delta_max=0.5, eta=0.1, inner_tol=None,
-                  inner_maxiter=None, fun_error=None, request_accuracy=None,
-                  eta_f=0.25, max_accuracy_retries=5, comm=None, pnp=None,
-                  callback=None, disp=False)
+                  inner_maxiter=None, hessp_tol=False, fun_error=None,
+                  request_accuracy=None, eta_f=0.25, max_accuracy_retries=5,
+                  comm=None, pnp=None, callback=None, disp=False)
 ```
 
 Bound-constrained trust-region Newton method with a truncated
@@ -168,7 +168,12 @@ for `l_bfgs_bounded`.
   unknowns.
 - A step is accepted if the ratio of actual to predicted decrease exceeds `eta`.
 - `inner_tol` is the relative residual tolerance of the inner CG; by default it
-  follows the forcing sequence $\min(0.5, \sqrt{\|g\|})$.
+  follows the forcing sequence $\min(0.5, \sqrt{\|g\| / \|g_0\|})$, relative to
+  the projected gradient at the first iterate so that it does not depend on the
+  units of the objective.
+- With `hessp_tol=True`, `hessp` is called with the keyword `tol`, the inner
+  CG's tolerance, so that a Hessian product that is itself computed inexactly
+  need only be as accurate as the subproblem uses.
 - For objectives that are evaluated inexactly (e.g. by truncated inner
   solves), `fun_error()` returns a bound on the error of the last evaluation and
   `request_accuracy(target)` asks the caller to evaluate more accurately. The
@@ -176,6 +181,19 @@ for `l_bfgs_bounded`.
 
 The result additionally contains `nb_hessp` (number of Hessian products),
 `delta_history` and `rho_history`.
+
+### Arrays on the GPU
+
+`tr_newton_bounded` works on arrays of any namespace that follows the
+[Python array API standard](https://data-apis.org/array-api/), e.g. CuPy arrays
+on a GPU (`pip install NuMPI[gpu]`). The iteration runs in the namespace and on
+the device of `x0`: the iterate, the gradient, the bounds (array bounds are moved
+there once), the free mask and the inner CG's vectors stay there, `fun`,
+`hessp` and `callback` receive such arrays, and the result's `x` and `jac` are
+such arrays. Only the reduced scalars -- dot products and maxima, single
+numbers -- come to the host. `Reduction` reduces such arrays in their own
+namespace too, but only completely (no `axis`), returning the result on the
+host.
 
 ## `constrained_conjugate_gradients`
 
