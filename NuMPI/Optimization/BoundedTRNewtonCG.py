@@ -153,25 +153,25 @@ class _HostScalars:
         return float(self._pnp.max(a))
 
 
-def _safety_factor(Delta, l):
+def _safety_factor(Delta, oldest):
     """Safety factor ``S`` of the adaptive delay (Meurant, Papez & Tichy,
     Numer. Algorithms 88, 2021; same as ``muFFTTO.solvers.findS``).
 
     With ``tail_j = sum_{i>=j} Delta_i`` (the current estimate of
     ``||s* - s_j||_B^2``): ``S = max_j tail_j / Delta_j`` over the iterations
-    ``j`` from the last one whose estimate is still ``>= 1e4 tail_l`` (else
+    ``j`` from the last one whose estimate is still ``>= 1e4 tail_oldest`` (else
     from 0) up to the last but one. It guards against accepting an estimate
     during a phase of stagnation.
     """
     Delta = np.asarray(Delta)
     tail = np.cumsum(Delta[::-1])[::-1]
-    far = np.nonzero(tail >= 1e4 * tail[l])[0]
+    far = np.nonzero(tail >= 1e4 * tail[oldest])[0]
     first = far[-1] if far.size > 0 else 0
     return float(np.max(tail[first:-1] / Delta[first:-1]))
 
 
 def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
-                 stop="energy", delay=10, tau=None, metric=None):
+                 stop="energy", delay=10, delay_tau=None, metric=None):
     """Steihaug-Toint truncated CG on ``min m(s) = gᵀs + ½ sᵀBs`` s.t.
     ``||s||_M <= delta`` (Nocedal & Wright, Algorithm 7.2; preconditioned
     variant of Conn-Gould-Toint sec. 7.5.1).
@@ -209,11 +209,11 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
       accurate (the CG energy error decreases monotonically). Uses only CG
       scalars; no extra Hessian or preconditioner application.
 
-      With ``tau`` (e.g. 0.25) the delay is adaptive instead (Meurant, Papez
-      & Tichy 2021, as in ``muFFTTO.solvers``): the estimate
-      ``sum_{j=l}^{k} Delta_j`` of ``||s* - s_l||_B^2`` is accepted once
-      ``S Delta_k / sum_{j=l}^{k-1} Delta_j <= tau`` (``S``: see
-      ``_safety_factor``) and ``k + 1 - l >= delay`` (``delay`` is then the
+      With ``delay_tau`` (e.g. 0.25) the delay is adaptive instead (Meurant,
+      Papez & Tichy 2021, as in ``muFFTTO.solvers``): the estimate
+      ``sum_{j=oldest}^{k} Delta_j`` of ``||s* - s_oldest||_B^2`` is accepted once
+      ``S Delta_k / sum_{j=oldest}^{k-1} Delta_j <= delay_tau`` (``S``: see
+      ``_safety_factor``) and ``k + 1 - oldest >= delay`` (``delay`` is then the
       minimal delay). CG stops when an accepted estimate is below ``tol**2``
       times the estimated ``||s* - s_0||_B^2``.
 
@@ -240,7 +240,7 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
     if stop not in ("residual", "energy"):
         raise ValueError(f"stop must be 'residual' or 'energy', got {stop!r}")
     Delta = []  # Delta_j = alpha_j (r_j, z_j), for stop="energy"
-    l = 0  # adaptive delay: oldest iterate whose error estimate is not accepted yet
+    oldest = 0  # adaptive delay: oldest iterate whose error estimate is not accepted yet
 
     # z = M**-1 r, and the exactly-propagated M-images of s and d.
     z = xp.asarray(r, copy=True) if precond is None else precond(r)
@@ -311,16 +311,16 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
             # rz still holds (r_k, z_k): Delta_k = alpha_k (r_k, z_k) (global scalars)
             Delta.append(alpha * rz)
             k = len(Delta) - 1
-            if tau is None:  # fixed delay
+            if delay_tau is None:  # fixed delay
                 if k >= delay and (sum(Delta[k - delay:])
                                    <= tol * tol * sum(Delta)):
                     return s, -model(s, Bs), False, "tolerance", nb_hessp
             elif k >= 1:  # adaptive delay, at least `delay`
-                S = _safety_factor(Delta, l)
-                while len(Delta) - l >= delay and S * Delta[k] <= tau * sum(Delta[l:k]):
-                    if sum(Delta[l:]) <= tol * tol * sum(Delta):
+                S = _safety_factor(Delta, oldest)
+                while len(Delta) - oldest >= delay and S * Delta[k] <= delay_tau * sum(Delta[oldest:k]):
+                    if sum(Delta[oldest:]) <= tol * tol * sum(Delta):
                         return s, -model(s, Bs), False, "tolerance", nb_hessp
-                    l += 1
+                    oldest += 1
 
         z = xp.asarray(r, copy=True) if precond is None else precond(r)
         Mz = r if metric is None else metric(z)
@@ -665,7 +665,7 @@ def tr_newton_bounded(
         s, pred, on_boundary, status, nb_hessp = _steihaug_cg(
             hessp_free, r_free, delta, tol_k, inner_maxiter, red,
             precond=precond_flat, stop=inner_stop, delay=inner_delay,
-            tau=inner_tau, metric=metric_flat,
+            delay_tau=inner_tau, metric=metric_flat,
         )
         nb_hessp_total += nb_hessp
 

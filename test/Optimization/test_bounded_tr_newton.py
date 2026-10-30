@@ -5,6 +5,7 @@
 #
 
 import numpy as np
+import pytest
 
 from NuMPI.Optimization import l_bfgs_bounded, tr_newton_bounded
 from NuMPI.Testing.Assertions import assert_all_allclose, parallel_assert
@@ -456,3 +457,217 @@ def test_mpi_negative_curvature(comm):
     parallel_assert(comm, res.success, res.message)
     assert_all_allclose(comm, res.x, _indefinite_minimiser(diag, g),
                         atol=1e-6)
+
+
+# ----------------------------------------------------------------------------
+# Preconditioned Steihaug CG: `precond`, `precond_metric`, energy-error stop
+# with fixed (`inner_delay`) or adaptive (`inner_tau`) delay.
+#
+# Ground truth: the SPD quadratic 0.5 x^T A x - b^T x with A a 1D Laplacian
+# plus a widely varying diagonal (ill-conditioned, not diagonal), minimiser
+# A^-1 b. The Jacobi preconditioner M = diag(A) is cheap and not exact, so CG
+# needs several iterations in every trust-region step.
+# ----------------------------------------------------------------------------
+
+
+def _spd_system(N, seed):
+    rng = np.random.default_rng(seed)
+    diag = np.exp(rng.uniform(0, 6, size=N))
+    A = np.diag(diag + 2.0) - np.diag(np.ones(N - 1), 1) - np.diag(np.ones(N - 1), -1)
+    b = rng.normal(size=N)
+    return A, b
+
+
+def _spd_quadratic(A, b):
+    def fun_grad(x):
+        Ax = A @ x
+        return 0.5 * float(x @ Ax) - float(b @ x), Ax - b
+
+    def hessp(x, v):
+        return A @ v
+
+    return fun_grad, hessp
+
+
+def test_safety_factor():
+    """Hand-computed values of the adaptive-delay safety factor
+    S = max_j tail_j / Delta_j, tail_j = sum_{i>=j} Delta_i."""
+    from NuMPI.Optimization.BoundedTRNewtonCG import _safety_factor
+
+    # tails 15, 7, 3, 1: ratios 15/8, 7/4, 3/2 over j = 0..2 (not the last)
+    assert np.isclose(_safety_factor([8.0, 4.0, 2.0, 1.0], 0), 15 / 8)
+    # tails 1e5+3, 1e5+2, 2, 1; oldest = 2: tail_0, tail_1 >= 1e4 tail_2, so
+    # the max starts at j = 1 (ratio 1.00002), max at j = 2 (2 / 1). Without
+    # that cut, j = 0 would give 1e5 + 3.
+    assert np.isclose(_safety_factor([1.0, 1e5, 1.0, 1.0], 2), 2.0)
+
+
+@pytest.mark.parametrize("delay_tau", [None, 0.25])
+@pytest.mark.parametrize("use_precond", [False, True])
+def test_energy_stop_reaches_tolerance(delay_tau, use_precond):
+    """One inner solve with a radius that is never reached: CG stops on the
+    energy-error estimate, and the true energy error of the step is below the
+    requested tolerance (with a small safety margin)."""
+    from NuMPI.Optimization.BoundedTRNewtonCG import _steihaug_cg
+
+    A, b = _spd_system(200, 3)
+    g = -b  # model m(s) = g^T s + 0.5 s^T A s, minimiser A^-1 b
+    s_exact = np.linalg.solve(A, b)
+    precond = (lambda r: r / np.diag(A)) if use_precond else None
+    tol = 1e-6
+
+    s, pred, on_boundary, status, nb_hessp = _steihaug_cg(
+        lambda v: A @ v, g, 1e10, tol, 10000, np, precond=precond,
+        stop="energy", delay=10, delay_tau=delay_tau)
+
+    assert status == "tolerance" and not on_boundary
+    err = s - s_exact
+    assert np.sqrt(err @ A @ err) <= 10 * tol * np.sqrt(s_exact @ A @ s_exact)
+    assert pred > 0
+
+
+def test_energy_stop_adaptive_delay_needs_at_least_min_delay():
+    """With the adaptive delay, at least `delay` CG iterations are done, even
+    where a loose tolerance on a well-conditioned system would allow fewer."""
+    from NuMPI.Optimization.BoundedTRNewtonCG import _steihaug_cg
+
+    rng = np.random.default_rng(4)
+    w = rng.uniform(1.0, 1.5, size=200)
+    b = rng.normal(size=200)
+    *_, status, nb_hessp = _steihaug_cg(lambda v: w * v, -b, 1e10, 0.5, 10000, np, stop="energy", delay=1,
+                                        delay_tau=0.25)
+    assert status == "tolerance" and nb_hessp < 10
+    for delay in (10, 30):
+        *_, status, nb_hessp = _steihaug_cg(lambda v: w * v, -b, 1e10, 0.5, 10000, np, stop="energy", delay=delay,
+                                            delay_tau=0.25)
+        assert status == "tolerance"
+        assert nb_hessp >= delay
+
+
+def test_invalid_inner_stop():
+    A, b = _spd_system(16, 5)
+    fun_grad, hessp = _spd_quadratic(A, b)
+    with pytest.raises(ValueError):
+        tr_newton_bounded(fun_grad, np.zeros(16), hessp, jac=True,
+                          inner_stop="bogus")
+
+
+@pytest.mark.parametrize("inner_stop", ["residual", "energy"])
+@pytest.mark.parametrize("inner_tau", [None, 0.25])
+def test_precond_converges(inner_stop, inner_tau):
+    """Jacobi-preconditioned TR Newton reaches A^-1 b, with every inner stop
+    variant, and uses fewer Hessian products than without preconditioner."""
+    N = 128
+    A, b = _spd_system(N, 6)
+    fun_grad, hessp = _spd_quadratic(A, b)
+    kwargs = dict(jac=True, gtol=1e-10, delta0=1.0, delta_max=1e3, inner_tol=1e-8,
+                  inner_stop=inner_stop, inner_tau=inner_tau)
+
+    res = tr_newton_bounded(fun_grad, np.zeros(N), hessp,
+                            precond=lambda r: r / np.diag(A), **kwargs)
+    res_plain = tr_newton_bounded(fun_grad, np.zeros(N), hessp, **kwargs)
+
+    assert res.success, res.message
+    np.testing.assert_allclose(res.x, np.linalg.solve(A, b), atol=1e-8)
+    assert res.nb_precond > 0
+    assert res.nb_hessp < res_plain.nb_hessp
+
+
+def test_precond_rejects_bounds():
+    A, b = _spd_system(16, 7)
+    fun_grad, hessp = _spd_quadratic(A, b)
+    with pytest.raises(NotImplementedError):
+        tr_newton_bounded(fun_grad, np.zeros(16), hessp, jac=True,
+                          bounds_lo=0.0, precond=lambda r: r / np.diag(A))
+
+
+def test_precond_metric_equal_to_precond_norm():
+    """precond_metric(z) = M z reproduces the default trust region (the
+    M-norm) exactly: same iterates, same counts."""
+    N = 128
+    A, b = _spd_system(N, 8)
+    fun_grad, hessp = _spd_quadratic(A, b)
+    M = np.diag(A)
+    kwargs = dict(jac=True, gtol=1e-10, precond=lambda r: r / M)
+
+    res = tr_newton_bounded(fun_grad, np.zeros(N), hessp, **kwargs)
+    res_metric = tr_newton_bounded(fun_grad, np.zeros(N), hessp,
+                                   precond_metric=lambda z: M * z, **kwargs)
+
+    assert res.success and res_metric.success
+    np.testing.assert_allclose(res_metric.x, res.x, rtol=0, atol=1e-12)
+    assert res_metric.nit == res.nit
+    assert res_metric.nb_hessp == res.nb_hessp
+    np.testing.assert_allclose(res_metric.delta_history, res.delta_history)
+
+
+@pytest.mark.parametrize("metric_diag", ["identity", "random"])
+def test_precond_metric_boundary_step(metric_diag):
+    """With precond_metric(z) = N z, a step that reaches the trust-region
+    boundary has ||s||_N = delta (N-norm, not the preconditioner's M-norm),
+    and TR Newton with that metric still converges."""
+    from NuMPI.Optimization.BoundedTRNewtonCG import _steihaug_cg
+
+    N = 128
+    A, b = _spd_system(N, 9)
+    M = np.diag(A)
+    rng = np.random.default_rng(10)
+    Nd = np.ones(N) if metric_diag == "identity" else np.exp(rng.uniform(-2, 2, size=N))
+    precond = lambda r: r / M  # noqa: E731
+    metric = lambda z: Nd * z  # noqa: E731
+
+    # N-norms of the unconstrained CG iterates s_1, s_2, ...; the radius is put
+    # between a later iterate (the 3rd or later) and the largest earlier one, so that the
+    # boundary is crossed only after several iterations and the crossing
+    # test uses the recursively propagated N s, N d
+    norms = []
+    for k in range(1, 40):
+        s_k = _steihaug_cg(lambda v: A @ v, -b, 1e10, 1e-14, k, np, precond=precond)[0]
+        norms.append(np.sqrt(s_k @ (Nd * s_k)))
+    k = next(k for k in range(2, len(norms)) if norms[k] > max(norms[:k]) * 1.001)
+    delta = 0.5 * (max(norms[:k]) + norms[k])
+
+    s, pred, on_boundary, status, nb_hessp = _steihaug_cg(
+        lambda v: A @ v, -b, delta, 1e-14, 10000, np, precond=precond, metric=metric)
+
+    assert nb_hessp == k + 1
+    assert on_boundary and status == "boundary"
+    np.testing.assert_allclose(np.sqrt(s @ (Nd * s)), delta, rtol=1e-10)
+    assert pred > 0
+
+    fun_grad, hessp = _spd_quadratic(A, b)
+    res = tr_newton_bounded(fun_grad, np.zeros(N), hessp, jac=True, gtol=1e-10,
+                            precond=precond, precond_metric=metric, inner_tau=0.25)
+    assert res.success, res.message
+    np.testing.assert_allclose(res.x, np.linalg.solve(A, b), atol=1e-8)
+
+
+def test_mpi_precond_metric_adaptive(comm):
+    """Distributed: Jacobi preconditioner, trust region in another norm,
+    adaptive delay; same minimiser as the serial dense solve."""
+    pnp = Reduction(comm)
+    N_global = 192
+    rng = np.random.default_rng(11)
+    w_global = np.exp(rng.uniform(0, 6, size=N_global))
+    y_global = rng.normal(size=N_global)
+    n_global = np.exp(rng.uniform(-1, 1, size=N_global))
+
+    w = _distribute(w_global, comm)
+    y = _distribute(y_global, comm)
+    n = _distribute(n_global, comm)
+
+    # w_i (x_i - y_i)^2 / 2 with the preconditioner 2 / w (inexact by 2x)
+    def fun_grad(x):
+        d = x - y
+        return pnp.sum(0.5 * w * d * d).item(), w * d
+
+    def hessp(x, v):
+        return w * v
+
+    res = tr_newton_bounded(fun_grad, np.zeros_like(y), hessp, jac=True,
+                            comm=comm, gtol=1e-10,
+                            precond=lambda r: 2 * r / w,
+                            precond_metric=lambda z: n * z, inner_tau=0.25)
+
+    parallel_assert(comm, res.success, res.message)
+    assert_all_allclose(comm, res.x, y, atol=1e-8)
