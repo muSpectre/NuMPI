@@ -2,8 +2,8 @@ Change log for NuMPI
 ===================
 
 
-v0.18.0 (not yet released)
---------------------------
+v0.18.0 (30Oct26)
+-----------------
 
 - BUG: The default Steihaug tolerance of `tr_newton_bounded` is measured relative to
   the projected gradient at the first iterate, so it no longer depends on the units
