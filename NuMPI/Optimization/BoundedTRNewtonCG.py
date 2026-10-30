@@ -153,8 +153,25 @@ class _HostScalars:
         return float(self._pnp.max(a))
 
 
+def _safety_factor(Delta, l):
+    """Safety factor ``S`` of the adaptive delay (Meurant, Papez & Tichy,
+    Numer. Algorithms 88, 2021; same as ``muFFTTO.solvers.findS``).
+
+    With ``tail_j = sum_{i>=j} Delta_i`` (the current estimate of
+    ``||s* - s_j||_B^2``): ``S = max_j tail_j / Delta_j`` over the iterations
+    ``j`` from the last one whose estimate is still ``>= 1e4 tail_l`` (else
+    from 0) up to the last but one. It guards against accepting an estimate
+    during a phase of stagnation.
+    """
+    Delta = np.asarray(Delta)
+    tail = np.cumsum(Delta[::-1])[::-1]
+    far = np.nonzero(tail >= 1e4 * tail[l])[0]
+    first = far[-1] if far.size > 0 else 0
+    return float(np.max(tail[first:-1] / Delta[first:-1]))
+
+
 def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
-                 stop="energy", delay=10):
+                 stop="energy", delay=10, tau=None, metric=None):
     """Steihaug-Toint truncated CG on ``min m(s) = gᵀs + ½ sᵀBs`` s.t.
     ``||s||_M <= delta`` (Nocedal & Wright, Algorithm 7.2; preconditioned
     variant of Conn-Gould-Toint sec. 7.5.1).
@@ -163,6 +180,17 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
     free subspace. ``precond`` (optional) must return ``M**-1 r`` for a
     symmetric positive semi-definite ``M``; ``None`` recovers the
     unpreconditioned algorithm exactly, with ``M = I``.
+
+    ``metric`` (optional, with ``precond``) measures the trust region in a
+    norm ``||s||_N`` other than the preconditioner's ``M``-norm: called as
+    ``metric(z)`` right after ``z = precond(r)``, it returns ``N z``. The
+    images ``N s``, ``N d`` follow from the CG recursions (``N d_{k+1} =
+    -N z_{k+1} + beta N d_k``), so no extra operator application is needed
+    when ``N z`` is a by-product of the preconditioner (e.g. the dual
+    ``z = G K_d G r`` with ``N = G^-1``: ``N z = K_d G r``). Without
+    ``metric``, ``N = M`` and ``N z = r``. With ``N != M`` the iterates'
+    ``N``-norm need not grow monotonically, so the first boundary crossing
+    is a heuristic stop.
 
     Returns ``(s, pred, on_boundary, status, nb_hessp)`` with
     ``pred = m(0) - m(s) = -m(s) >= 0`` the predicted reduction.
@@ -180,6 +208,14 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
       estimated ``||s* - s_0||_B^2``. The returned ``s_k`` is at least as
       accurate (the CG energy error decreases monotonically). Uses only CG
       scalars; no extra Hessian or preconditioner application.
+
+      With ``tau`` (e.g. 0.25) the delay is adaptive instead (Meurant, Papez
+      & Tichy 2021, as in ``muFFTTO.solvers``): the estimate
+      ``sum_{j=l}^{k} Delta_j`` of ``||s* - s_l||_B^2`` is accepted once
+      ``S Delta_k / sum_{j=l}^{k-1} Delta_j <= tau`` (``S``: see
+      ``_safety_factor``) and ``k + 1 - l >= delay`` (``delay`` is then the
+      minimal delay). CG stops when an accepted estimate is below ``tol**2``
+      times the estimated ``||s* - s_0||_B^2``.
 
     Exits: interior tolerance (see ``stop``), negative curvature or
     trust-region crossing (both: step to the boundary), iteration cap, or
@@ -204,11 +240,12 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
     if stop not in ("residual", "energy"):
         raise ValueError(f"stop must be 'residual' or 'energy', got {stop!r}")
     Delta = []  # Delta_j = alpha_j (r_j, z_j), for stop="energy"
+    l = 0  # adaptive delay: oldest iterate whose error estimate is not accepted yet
 
     # z = M**-1 r, and the exactly-propagated M-images of s and d.
     z = xp.asarray(r, copy=True) if precond is None else precond(r)
-    Ms = xp.zeros_like(g_free)  # M s, seed M s_0 = 0
-    Md = -r  # M d_0 = M (-z_0) = -r_0 (a new array)
+    Ms = xp.zeros_like(g_free)  # M s (N s with `metric`), seed M s_0 = 0
+    Md = -(r if metric is None else metric(z))  # M d_0 = M (-z_0) = -r_0
 
     d = -z
     rz = pnp.sum(r * z)
@@ -274,11 +311,19 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
             # rz still holds (r_k, z_k): Delta_k = alpha_k (r_k, z_k) (global scalars)
             Delta.append(alpha * rz)
             k = len(Delta) - 1
-            if k >= delay and (sum(Delta[k - delay:])
-                               <= tol * tol * sum(Delta)):
-                return s, -model(s, Bs), False, "tolerance", nb_hessp
+            if tau is None:  # fixed delay
+                if k >= delay and (sum(Delta[k - delay:])
+                                   <= tol * tol * sum(Delta)):
+                    return s, -model(s, Bs), False, "tolerance", nb_hessp
+            elif k >= 1:  # adaptive delay, at least `delay`
+                S = _safety_factor(Delta, l)
+                while len(Delta) - l >= delay and S * Delta[k] <= tau * sum(Delta[l:k]):
+                    if sum(Delta[l:]) <= tol * tol * sum(Delta):
+                        return s, -model(s, Bs), False, "tolerance", nb_hessp
+                    l += 1
 
         z = xp.asarray(r, copy=True) if precond is None else precond(r)
+        Mz = r if metric is None else metric(z)
         new_rz = pnp.sum(r * z)
         if new_rz <= 0.0:
             return (s, -model(s, Bs), False,
@@ -286,7 +331,7 @@ def _steihaug_cg(hessp_free, g_free, delta, tol, maxiter, pnp, precond=None,
 
         beta = new_rz / rz
         d = -z + beta * d
-        Md = -r + beta * Md  # exact: M z = r by construction
+        Md = -Mz + beta * Md  # exact: M z = r by construction (N z from `metric`)
         rz = new_rz
         rr = new_rr
 
@@ -303,6 +348,7 @@ def tr_newton_bounded(
     bounds_hi=None,
     zero_mask=None,
     precond=None,
+    precond_metric=None,
     gtol=1e-5,
     maxiter=200,
     delta0=0.05,
@@ -311,6 +357,7 @@ def tr_newton_bounded(
     inner_tol=None,
     inner_stop="energy",
     inner_delay=10,
+    inner_tau=None,
     inner_maxiter=None,
     hessp_tol=False,
     fun_error=None,
@@ -365,6 +412,11 @@ def tr_newton_bounded(
         (``bounds_lo``, ``bounds_hi`` and ``zero_mask`` all ``None``),
         because the internal ``M d = -r + beta M d_prev`` recursion requires
         that ``z`` is not masked after ``M**-1`` is applied.
+    precond_metric : callable, optional
+        With ``precond``: measure the trust region in a norm ``||s||_N``
+        instead of the ``M``-norm. ``precond_metric(z)``, called right after
+        ``z = precond(r)``, returns ``N z`` (local slices); see
+        ``_steihaug_cg``.
     gtol : float, optional
         Convergence tolerance on the infinity norm of the box-masked
         gradient (same measure as ``l_bfgs_bounded``). Default 1e-5.
@@ -396,6 +448,11 @@ def tr_newton_bounded(
         Delay ``d`` of the energy-error lower bound (``inner_stop="energy"``);
         at least ``d`` CG iterations are done unless another exit is taken.
         Default 10.
+    inner_tau : float, optional
+        ``None`` (default): the delay is fixed to ``inner_delay``. A value
+        (e.g. 0.25): adaptive delay (Meurant, Papez & Tichy 2021) with
+        tolerance ``inner_tau`` and minimal delay ``inner_delay``; see
+        ``_steihaug_cg``.
     inner_maxiter : int, optional
         Iteration cap of the Steihaug CG. Default: number of global degrees
         of freedom (i.e. effectively uncapped).
@@ -516,6 +573,8 @@ def tr_newton_bounded(
         return _flat_result(precond(_shaped(v), *args))
 
     precond_flat = None if precond is None else _precond_flat
+    metric_flat = (None if precond_metric is None else
+                   lambda z: _flat_result(precond_metric(_shaped(z))))
 
     def project(y):
         z = y
@@ -606,6 +665,7 @@ def tr_newton_bounded(
         s, pred, on_boundary, status, nb_hessp = _steihaug_cg(
             hessp_free, r_free, delta, tol_k, inner_maxiter, red,
             precond=precond_flat, stop=inner_stop, delay=inner_delay,
+            tau=inner_tau, metric=metric_flat,
         )
         nb_hessp_total += nb_hessp
 
