@@ -223,18 +223,19 @@ def test_raises_and_no_resourcewarnings(comm_self):
             assert not issubclass(wi.category, ResourceWarning)
 
 
-def test_corrupted_file(comm_self):
+def test_corrupted_file(comm_self, tmp_path):
     """
     tests that the reader behaves decently when trying to open a file having
     the wrong format see issue #23
     """
     # create test corrupted file
 
-    with open("corrupted.dummy", "w") as f:
+    filename = str(tmp_path / "corrupted.dummy")
+    with open(filename, "w") as f:
         f.write("dfgdfghlkjhgiuhdfg")
 
     with pytest.raises(MPIFileTypeError):
-        NPYFile("corrupted.dummy", comm=comm_self)
+        NPYFile(filename, comm=comm_self)
 
 
 @pytest.mark.skipif(
