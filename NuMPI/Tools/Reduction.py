@@ -26,7 +26,7 @@
 import math
 
 import numpy as np
-from array_api_compat import array_namespace
+from array_api_compat import array_namespace, is_array_api_obj, is_numpy_array
 
 from .. import MPI
 
@@ -91,9 +91,13 @@ def comm_size(comm):
 def _is_numpy_input(a):
     """NumPy arrays and scalars, and anything else that is not an array of
     another array-API namespace (Python numbers, lists), take the NumPy path
-    of :class:`Reduction`."""
-    return (isinstance(a, (np.ndarray, np.generic))
-            or not hasattr(a, "__array_namespace__"))
+    of :class:`Reduction`.
+
+    Decided by array-api-compat, which knows the libraries whose arrays do
+    not carry ``__array_namespace__`` themselves -- cupy's among them -- and
+    whose arrays, handed to NumPy, would otherwise silently be reduced
+    through ``__array_function__`` and then reach MPI as device buffers."""
+    return is_numpy_array(a) or not is_array_api_obj(a)
 
 
 def _local_scalar(npop, arr):

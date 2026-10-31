@@ -2,7 +2,7 @@ Change log for NuMPI
 ===================
 
 
-v0.19.0 (not yet released)
+v0.18.1 (not yet released)
 --------------------------
 
 - ENH: `tr_newton_bounded` works on arrays of any array-API namespace, e.g. CuPy
@@ -12,6 +12,9 @@ v0.19.0 (not yet released)
   namespace and returns the result on the host
 - ENH: `gpu` extra (CuPy); a GPU CI job tests the trust region on CuPy arrays
 - BUILD: Requires array-api-compat
+- BUG: `Reduction` recognizes CuPy arrays (whose class does not carry
+  `__array_namespace__`) as arrays of another namespace; before, they took the
+  NumPy path, where `max`/`min` failed and `sum` handed MPI a device buffer
 
 v0.18.0 (30Oct26)
 -----------------
