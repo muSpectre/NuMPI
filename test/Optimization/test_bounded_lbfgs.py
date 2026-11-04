@@ -514,3 +514,20 @@ def test_nd_x0_callback_receives_original_shape():
     )
     assert res.success, res.message
     assert seen and all(s == shape for s in seen)
+
+
+def test_xtol_not_on_first_steepest_descent_step():
+    """A small objective scale (gradient ~ voxel volume on a fine grid) makes the unscaled first step shorter than
+    xtol; the run must not stop there but reach the minimizer."""
+    rng = np.random.default_rng(12)
+    N = 64
+    y = rng.uniform(0.2, 0.8, size=N)
+    scale = 1e-6
+
+    def fun(x):
+        return 0.5 * scale * np.sum((x - y) ** 2), scale * (x - y)
+
+    res = l_bfgs_bounded(fun, np.zeros(N), jac=True, bounds_lo=0, bounds_hi=1, gtol=0, ftol=0, xtol=1e-3,
+                         maxiter=200)
+    assert res.nit > 1
+    np.testing.assert_allclose(res.x, y, atol=1e-2)
