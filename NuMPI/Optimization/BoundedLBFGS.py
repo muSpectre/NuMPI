@@ -219,6 +219,10 @@ def l_bfgs_bounded(
             d = np.where(zero_mask, 0.0, d)
 
         gd = pnp.sum(r_free * d)
+        # No xtol test while the history is empty (first iteration): that step is steepest descent of unscaled
+        # length |gradient|, which can be < xtol far from a minimizer (e.g. objectives integrated over a fine grid,
+        # gradient ~ voxel volume) and would stop the run after one iteration.
+        quasi_newton_step = len(s_hist) > 0
         if gd >= 0.0:
             # Stale curvature produced a non-descent direction: reset.
             s_hist.clear()
@@ -276,7 +280,7 @@ def l_bfgs_bounded(
                 y_hist.pop()
                 rho_hist.pop()
 
-        if xtol > 0:
+        if xtol > 0 and quasi_newton_step:
             if pnp.max(np.abs(x_new - x)) < xtol:
                 return _finish(
                     True,
