@@ -97,8 +97,9 @@ class QuadraticConstraint:
             ``j`` is :math:`a_j`. A 1-D array means ``m = 1``.
         hessp: ``hessp(u)`` returns, for the flat local slice ``u``, the
             local ``(m, n)`` array whose row ``j`` is :math:`B_j u`. It may
-            exchange ghost values, so every rank calls it together. ``None``
-            means every :math:`B_j = 0`.
+            exchange ghost values, so every rank calls it together. It must
+            be linear in ``u`` and symmetric, see :meth:`check_hessp`.
+            ``None`` means every :math:`B_j = 0`.
         target: The right-hand sides :math:`c_j^*`, length ``m``, the same on
             every rank.
         pnp: Reduction wrapper exposing ``sum``. ``None`` means ``numpy``.
@@ -132,6 +133,68 @@ class QuadraticConstraint:
         if self.hessp is None:
             return np.zeros((self.m, u.size))
         return np.asarray(self.hessp(u), dtype=float).reshape(self.m, u.size)
+
+    def check_hessp(self, rtol=1e-8, rng=None):
+        r"""
+        Test that ``hessp`` is a symmetric linear map.
+
+        The value :math:`\tfrac12 x^{\mathsf T} B_j x + \langle a_j, x\rangle`,
+        the normal :math:`B_j x + a_j` and the restoration in :meth:`project`
+        are exact only for constant symmetric :math:`B_j`. Two random probes
+        :math:`u, v` test linearity,
+        :math:`B_j (u - 2 v) = B_j u - 2 B_j v`, and symmetry,
+        :math:`\langle v, B_j u\rangle = \langle u, B_j v\rangle`. This
+        takes three calls of ``hessp`` and one reduction.
+
+        A product that is not linear in its argument (a Hessian that depends
+        on the point, an affine map) or that represents the quadratic form by
+        a non-symmetric matrix fails the test.
+
+        Args:
+            rtol: Relative tolerance of both tests.
+            rng: ``numpy.random.Generator`` of the probes. ``None`` draws
+                them from fresh entropy.
+
+        Raises:
+            ValueError: ``hessp`` is not linear or not symmetric.
+        """
+        if self.hessp is None:
+            return
+        if rng is None:
+            rng = np.random.default_rng()
+        u, v = rng.standard_normal((2, self.a.shape[1]))
+        Bu, Bv = self._products(u), self._products(v)
+        defect = self._products(u - 2.0 * v) - Bu + 2.0 * Bv
+        m = self.m
+        total = _reduce(
+            np.concatenate([
+                np.sum(defect * defect, axis=1),
+                np.sum(Bu * Bu, axis=1),
+                np.sum(Bv * Bv, axis=1),
+                Bu @ v,
+                Bv @ u,
+                [u @ u, v @ v],
+            ]),
+            self.pnp,
+        )
+        defect2, BuBu, BvBv, vBu, uBv = np.split(total[:5 * m], 5)
+        uu, vv = total[5 * m:]
+        nonlinear = np.sqrt(defect2) > rtol * np.sqrt(BuBu + 4.0 * BvBv)
+        if np.any(nonlinear) or not np.all(np.isfinite(total)):
+            raise ValueError(
+                "QuadraticConstraint: hessp is not linear in its argument for "
+                f"component(s) {np.flatnonzero(nonlinear).tolist()}; the "
+                "constraint must be quadratic with a constant Hessian"
+            )
+        asymmetric = np.abs(vBu - uBv) > rtol * (
+            np.sqrt(vv * BuBu) + np.sqrt(uu * BvBv)
+        )
+        if np.any(asymmetric):
+            raise ValueError(
+                "QuadraticConstraint: hessp is not symmetric for component(s) "
+                f"{np.flatnonzero(asymmetric).tolist()}; pass the product with "
+                "the symmetric part (B + B^T) / 2 of the matrix"
+            )
 
     def value(self, x):
         """

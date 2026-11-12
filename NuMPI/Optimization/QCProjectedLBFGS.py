@@ -111,8 +111,9 @@ def l_bfgs_qc_projected(
     Raises:
         RuntimeError: ``comm`` and ``pnp`` are both given, or ``x0`` cannot be
             restored onto the feasible set.
-        ValueError: The constraint is missing, or its reduction does not span
-            the same ranks as the solver's.
+        ValueError: The constraint is missing, its reduction does not span
+            the same ranks as the solver's, or its ``hessp`` is not a symmetric
+            linear map (``QuadraticConstraint.check_hessp``).
     """
     if comm is not None:
         if pnp is not None:
@@ -129,6 +130,10 @@ def l_bfgs_qc_projected(
             "The QuadraticConstraint's reduction does not span the same MPI "
             "ranks as l_bfgs_qc_projected."
         )
+    # The multipliers, the tangent projection and the restoration are exact
+    # only for a symmetric linear hessp; anything else would be solved
+    # silently as a different problem.
+    qc.check_hessp()
 
     original_shape = np.asarray(x0).shape
 
@@ -229,27 +234,41 @@ def l_bfgs_qc_projected(
             "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
         )
 
+    def steepest_descent():
+        # Drop the curvature history and return the reprojected steepest-
+        # descent direction with its slope, or None if the normals on the
+        # entries that are not held are linearly dependent.
+        s_hist.clear()
+        y_hist.clear()
+        rho_hist.clear()
+        d = reproject(-Gp, x, held)
+        return None if d is None else (d, pnp.sum(Gp * d))
+
+    def _singular(iteration):
+        return _finish(
+            False, x, phi, grad, lam, iteration, r_norm,
+            "ABNORMAL: GRAM MATRIX OF THE CONSTRAINT NORMALS IS SINGULAR",
+        )
+
     for iteration in range(1, maxiter + 1):
         d = reproject(_twoloop_direction(Gp, s_hist, y_hist, rho_hist, pnp), x, held)
         gd = 0.0 if d is None else pnp.sum(Gp * d)
-        if d is None or gd >= 0.0:
+        if d is None or not gd < 0.0:
             # Stale curvature produced a non-descent direction: reset.
-            s_hist.clear()
-            y_hist.clear()
-            rho_hist.clear()
-            d = reproject(-Gp, x, held)
-            gd = pnp.sum(Gp * d)
+            fallback = steepest_descent()
+            if fallback is None:
+                return _singular(iteration)
+            d, gd = fallback
 
         step = _armijo(
             fun_grad, x, d, phi, gd, restore,
             c1=c1, max_halvings=max_halvings, alpha_init=1.0,
         )
         if step is None:
-            s_hist.clear()
-            y_hist.clear()
-            rho_hist.clear()
-            d = reproject(-Gp, x, held)
-            gd = pnp.sum(Gp * d)
+            fallback = steepest_descent()
+            if fallback is None:
+                return _singular(iteration)
+            d, gd = fallback
             g_norm = np.sqrt(pnp.sum(Gp * Gp))
             alpha_init = 1.0 / g_norm if g_norm > 0 else 1.0
             step = _armijo(
@@ -266,10 +285,7 @@ def l_bfgs_qc_projected(
 
         st_new = state(x_new, grad_new, G_prev=G)
         if st_new is None:
-            return _finish(
-                False, x, phi, grad, lam, iteration, r_norm,
-                "ABNORMAL: GRAM MATRIX OF THE CONSTRAINT NORMALS IS SINGULAR",
-            )
+            return _singular(iteration)
         held_new, lam_new, G_new, Gp_new, PG = st_new
 
         # Curvature pair from the reduced gradient at x_new minus the previous

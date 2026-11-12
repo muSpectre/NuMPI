@@ -2,6 +2,18 @@ Change log for NuMPI
 ===================
 
 
+v0.19.0 (not yet released)
+--------------------------
+
+- ENH: `QuadraticConstraint`, quadratic equality constraints given by their
+  linear terms and matrix-free Hessian products, and `l_bfgs_qc_projected`, a
+  projected L-BFGS on these constraints and box bounds
+- ENH: `QuadraticConstraint.check_hessp` tests that the Hessian product is a
+  symmetric linear map; `l_bfgs_qc_projected` refuses a product that is not
+- BUG: `l_bfgs_qc_projected` ends with the singular-Gram-matrix message when the
+  search direction cannot be projected onto the tangent space, where it raised
+  `TypeError` before
+
 v0.18.1 (31Oct26)
 -----------------
 

@@ -82,3 +82,49 @@ def test_returns_closed_form_minimiser_and_multipliers(comm, case):
         comm, np.allclose(res.multiplier, lam_true, atol=1e-8), str(res.multiplier)
     )
     parallel_assert(comm, res.constr_violation < 1e-12, str(res.constr_violation))
+
+
+def test_dependent_normals_of_search_direction_end_the_run(comm):
+    # Every rank holds the same three entries. The third sits on its lower
+    # bound and is pulled into the box, so it is not held; there the normals
+    # of the two constraints are parallel and dominate the Gram matrix of the
+    # search direction, while the Gram matrix on the free entries is regular.
+    pnp = Reduction(comm)
+    big = 1e7
+    pull = np.array([2.0, 3.0, 1e9])
+    qc = QuadraticConstraint(
+        np.array([[1.0, 0.0, big], [0.0, 1.0, big]]), None,
+        [comm.Get_size(), comm.Get_size()], pnp=pnp,
+    )
+    x0 = np.array([1.0, 1.0, 0.0])
+
+    def fun_grad(x):
+        diff = x - pull
+        return 0.5 * pnp.sum(diff * diff).item(), diff
+
+    res = l_bfgs_qc_projected(fun_grad, x0, qc, bounds_lo=0.0, comm=comm)
+
+    parallel_assert(comm, not res.success)
+    parallel_assert(comm, "SINGULAR" in res.message, res.message)
+    assert_all_allclose(comm, res.x, x0)
+
+
+@pytest.mark.parametrize(
+    "hessp, complaint",
+    [
+        (lambda u: np.concatenate([u[u.size // 2:], np.zeros(u.size // 2)]), "symmetric"),
+        (lambda u: u**2, "linear"),
+        (lambda u: u + 1.0, "linear"),
+    ],
+    ids=["one_sided_bilinear", "point_dependent", "affine"],
+)
+def test_hessp_that_is_not_a_symmetric_linear_map_is_refused(comm, hessp, complaint):
+    pnp = Reduction(comm)
+    k = 6
+    qc = QuadraticConstraint(np.zeros(k), hessp, 1.0, pnp=pnp)
+
+    def fun_grad(x):
+        return 0.5 * pnp.sum(x * x).item(), x
+
+    with pytest.raises(ValueError, match=complaint):
+        l_bfgs_qc_projected(fun_grad, np.ones(k), qc, comm=comm)
