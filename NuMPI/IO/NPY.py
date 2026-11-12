@@ -44,8 +44,7 @@ except ImportError:
 
 from .. import MPI
 from ..Tools import Reduction
-from .common import (MPIFileTypeError, MPIFileView, decompose_shape,
-                     recover_shape)
+from .common import MPIFileTypeError, MPIFileView, decompose_shape, recover_shape
 
 
 def _validate_subdomain(

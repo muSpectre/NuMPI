@@ -83,10 +83,14 @@ def _armijo(fun_grad, x, d, phi, gd, project, *, c1, max_halvings, alpha_init):
     """
     Projected backtracking line search. Returns
     ``(x_new, phi_new, grad_new, alpha)`` on success, ``None`` on failure.
+    A trial for which ``project`` returns ``None`` is rejected.
     """
     alpha = alpha_init
     for _ in range(max_halvings):
         x_try = project(x + alpha * d)
+        if x_try is None:
+            alpha *= 0.5
+            continue
         phi_try, grad_try = fun_grad(x_try)
         if phi_try <= phi + c1 * alpha * gd:
             return x_try, phi_try, grad_try, alpha

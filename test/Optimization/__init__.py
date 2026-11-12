@@ -21,5 +21,5 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-from . import MinimizationProblems # noqa F401
-from . import MPIMinimizationProblems # noqa F401
+from . import MinimizationProblems  # noqa F401
+from . import MPIMinimizationProblems  # noqa F401

@@ -2,6 +2,29 @@ Change log for NuMPI
 ===================
 
 
+v0.19.0 (not yet released)
+--------------------------
+
+- ENH: `QuadraticConstraint`, quadratic equality constraints given by their
+  linear terms and matrix-free Hessian products, and `l_bfgs_qc_projected`, a
+  projected L-BFGS on these constraints and box bounds
+- ENH: `BilinearConstraint`, the constraint `sum_i w_i g_i h_i = V` of two
+  fields, whose restoration is the exact Euclidean projection onto the feasible
+  set (bisection-like search for one multiplier, closed form per node)
+- ENH: `QuadraticConstraint.restore` solves for the point on the clipped normal
+  path: clipped entries can re-enter the box, the single-constraint case is
+  solved in closed form and safeguarded, and for a linear constraint the result
+  is the Euclidean projection
+- ENH: `l_bfgs_qc_projected(scale=...)` iterates on the unknowns divided by a
+  scale; `scale="auto"` balances the two fields of a `BilinearConstraint` from
+  two probes of the curvature of the objective
+- ENH: `l_bfgs_qc_projected` reuses Hessian products by linearity: one product
+  per search direction and one per constraint and restored trial point
+- ENH: `QuadraticConstraint.check_hessp` tests that the Hessian product is a
+  symmetric linear map; `l_bfgs_qc_projected` refuses a product that is not
+- BUG: `l_bfgs_projected` returns the iterate of the last accepted step when it
+  stops on `xtol` or `ftol`; it returned the iterate before that step
+
 v0.18.1 (31Oct26)
 -----------------
 

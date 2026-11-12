@@ -2,9 +2,10 @@
 
 ```python
 from NuMPI.Optimization import (
-    l_bfgs, l_bfgs_bounded, l_bfgs_projected, tr_newton_bounded,
+    l_bfgs, l_bfgs_bounded, l_bfgs_projected, l_bfgs_qc_projected,
+    tr_newton_bounded,
     constrained_conjugate_gradients, constrained_conjugate_gradients_with_restart,
-    LinearConstraint,
+    LinearConstraint, QuadraticConstraint, BilinearConstraint,
 )
 ```
 
@@ -17,6 +18,7 @@ reduced over the communicator. Without a communicator they run serially.
 | `l_bfgs` | $\min f(x)$ | $f$, $\nabla f$ |
 | `l_bfgs_bounded` | $\min f(x)$ subject to $l \le x \le h$ | $f$, $\nabla f$ |
 | `l_bfgs_projected` | $\min f(x)$ subject to $\langle a, x\rangle = V^\star$ and $l \le x \le h$ | $f$, $\nabla f$ |
+| `l_bfgs_qc_projected` | $\min f(x)$ subject to $\tfrac12 x^{\mathsf T} B_j x + \langle a_j, x\rangle = c_j^\star$ (e.g. $\sum_i g_i h_i = V$) and $l \le x \le h$ | $f$, $\nabla f$, products $B_j u$ |
 | `tr_newton_bounded` | $\min f(x)$ subject to $l \le x \le h$ | $f$, $\nabla f$, Hessian products |
 | `constrained_conjugate_gradients` | quadratic $f$, $x \ge l$, optionally $\langle a, x\rangle = V^\star$ | $\nabla f$, Hessian products |
 | `constrained_conjugate_gradients_with_restart` | quadratic $f$, $x \ge l$, optionally a prescribed mean of $x$ | $\nabla f$, Hessian products |
@@ -32,9 +34,9 @@ Arrays are *distributed*, scalars are *global*:
 |----------|-------------|
 | iterate `x`, initial guess `x0`, gradient | local slice on each process |
 | bounds `bounds_lo`, `bounds_hi`, `bounds`, `zero_mask` | local, sliced like `x` |
-| `LinearConstraint.a` | local |
+| `LinearConstraint.a`, `QuadraticConstraint.a`, argument and result of its `hessp`, `BilinearConstraint.weights`, `scale` | local |
 | energy $f(x)$ | **global** (reduced) |
-| `LinearConstraint.target` $V^\star$ | **global** |
+| `LinearConstraint.target` $V^\star$, `QuadraticConstraint.target` $c^\star$, `BilinearConstraint.target` $V$ | **global** |
 | tolerances, Lagrange multiplier | **global** |
 | argument of `callback(x)` | local slice of the current iterate |
 
@@ -142,9 +144,158 @@ $F = \{x : \langle a, x\rangle = V^\star,\ l \le x \le h,\ x_{\text{zero\_mask}}
 with the constraint given as a [`LinearConstraint`](#linearconstraint). Search
 directions are projected onto the tangent of the constraint and the iterates
 back onto $F$. It converges when the infinity norm of the projected gradient
-drops below `gtol`, or when the largest change of an entry of $x$ drops below
-`xtol`. The result contains the Lagrange multiplier of the constraint,
-`multiplier`.
+drops below `gtol`, when the largest change of an entry of $x$ drops below
+`xtol`, or when the relative change of $f$ drops below `ftol`; in each case it
+returns the iterate of the last accepted step. The result contains the
+Lagrange multiplier of the constraint, `multiplier`.
+
+## `l_bfgs_qc_projected`
+
+```python
+l_bfgs_qc_projected(fun, x0, quadratic_constraint, args=(), jac=None,
+                    bounds_lo=None, bounds_hi=None, zero_mask=None, scale=None,
+                    gtol=1e-5, ftol=0.0, xtol=0.0, maxiter=500, maxcor=10,
+                    c1=1e-4, max_halvings=40, max_restore_rounds=20, comm=None,
+                    pnp=None, callback=None, disp=False)
+```
+
+L-BFGS on the set
+
+$$
+F = \bigl\{x : c_j(x) = c_j^\star \ (j = 1, \dots, m),\ l \le x \le h,\
+x_{\text{zero\_mask}} = 0\bigr\},
+\qquad
+c_j(x) = \tfrac12 x^{\mathsf T} B_j x + \langle a_j, x\rangle ,
+$$
+
+with the constraints given as a [`QuadraticConstraint`](#quadraticconstraint).
+The matrices $B_j$ are constant and symmetric and enter only through their
+products with vectors. For the bilinear coupling $\sum_i g_i h_i = V$ of two
+fields, use the [`BilinearConstraint`](#bilinearconstraint):
+
+```python
+constraint = BilinearConstraint(n_local, V, pnp=pnp)      # x = (g, h)
+res = l_bfgs_qc_projected(fun, np.concatenate([g0, h0]), constraint,
+                          bounds_lo=0.0, comm=comm)
+```
+
+The feasible set is curved, so unlike in `l_bfgs_projected` the normals of the
+constraints depend on the iterate: column $j$ of $N(x)$ is
+$\nabla c_j(x) = B_j x + a_j$. One iteration at the feasible point $x$ with
+gradient $g = \nabla f(x)$ does the following.
+
+1. **Multipliers and reduced gradient.** With $\mathcal F$ the entries strictly
+   inside their bounds and outside `zero_mask`, the multipliers are the
+   least-squares fit of the gradient by the normals on $\mathcal F$,
+   $\lambda = (N_{\mathcal F}^{\mathsf T} N_{\mathcal F})^{-1} N_{\mathcal F}^{\mathsf T} g_{\mathcal F}$,
+   and the reduced gradient is $G = g - N \lambda$, the gradient of the
+   Lagrangian $f - \sum_j \lambda_j c_j$. An entry is *held* if it is in
+   `zero_mask`, or on its lower bound with $G_i \ge 0$, or on its upper bound
+   with $G_i \le 0$. $G^{\mathrm p}$ is $G$ with the held entries set to zero,
+   and the solver converges when $\lVert G^{\mathrm p}\rVert_\infty <$ `gtol`.
+2. **Search direction.** The L-BFGS two-loop recursion is applied to
+   $G^{\mathrm p}$. The result is set to zero on the held entries and projected
+   onto the tangent space of the constraints on the remaining ones,
+   $d \leftarrow d - N \mu$ with $\mu$ the least-squares fit of $d$ by the
+   normals on the entries that are not held. If $d$ is not a descent direction,
+   the curvature pairs are dropped and $d$ is the same projection of
+   $-G^{\mathrm p}$.
+3. **Line search.** The step $\alpha$ starts from 1 and is halved until the
+   restored trial point $x^+ = R(x + \alpha d)$ satisfies the Armijo condition
+   $f(x^+) \le f(x) + c_1 \alpha \langle G^{\mathrm p}, d\rangle$. $R$ is the
+   restoration `restore` of the constraint, with the held entries fixed: they
+   stay on their bounds, while all other entries are clipped to the bounds and
+   moved onto the constraints. (A curved constraint needs a correction of
+   order $\alpha^2$ at every step. If that correction were allowed to move the
+   held entries, it would lift about half of them off their bounds each time,
+   and the set of held entries would never settle.) A trial point that cannot
+   be restored is rejected like one that does not decrease $f$ enough. If no
+   step is accepted, the search is repeated once along the projected steepest
+   descent, starting from $\alpha = 1 / \lVert G^{\mathrm p}\rVert_2$.
+4. **Curvature pair.** $s = x^+ - x$ and $y = G^+ - P(x^+) G$, set to zero on
+   the entries held at $x^+$. $P(x^+)$ removes the components along the
+   normals at $x^+$, with the same fit as in step 1. Because the $B_j$ are
+   constant, $y = P(x^+) \bigl[\nabla f(x^+) - \nabla f(x) - \sum_j \lambda_j B_j s\bigr]$:
+   the pair measures the Hessian of the Lagrangian, including the curvature of
+   the constraints, in the tangent space at $x^+$. That Hessian can be
+   indefinite, and a pair is stored only if $\langle s, y\rangle$ is
+   sufficiently positive.
+
+`x0` is restored onto $F$ before the first iteration; if that fails, the solver
+raises `RuntimeError`. The solver also converges when the largest change of an
+entry of $x$ drops below `xtol`, or the relative change of $f$ below `ftol`;
+it then returns the iterate of the last accepted step. The result contains the
+multipliers $\lambda$ (`multiplier`, one per constraint),
+`max_grad` $= \lVert G^{\mathrm p}\rVert_\infty$ and
+`constr_violation` $= \max_j \lvert c_j(x) - c_j^\star\rvert$.
+
+**Scaling.** Tangent projection, restoration and the L-BFGS update use the
+Euclidean inner product of the unknowns, so the solver is sensitive to their
+relative magnitude: rescaling $g \to 10 g$, $h \to h / 10$ in a bilinear
+problem already costs an order of magnitude in iterations. Pass `scale`, an
+array $s > 0$ shaped like `x0` (or a scalar) holding the typical magnitude of
+each unknown. The solver then iterates on $u = x / s$: the gradient becomes
+$s \nabla f$, the bounds $l / s$ and $h / s$, the constraint
+$\tfrac12 u^{\mathsf T} (s B_j s) u + \langle s a_j, u\rangle$, and everything
+above, including `gtol`, `xtol` and `max_grad`, refers to $u$. `x`, `jac` and
+the argument of `callback` are returned in the original variables, and the
+multipliers do not depend on the scale. The result holds the scale that was
+used as `scale`.
+
+For a [`BilinearConstraint`](#bilinearconstraint), `scale="auto"` lets the
+solver balance the two fields itself. The constraint $\sum_i w_i g_i h_i = V$
+does not change under $g \to g / \sigma$, $h \to \sigma h$, so the scale is
+$\sigma$ on the entries of $g$ and $1 / \sigma$ on those of $h$, and only the
+one number $\sigma$ is chosen:
+
+1. `x0` is restored onto the feasible set, in the original variables.
+2. The curvature of the objective along each field is probed there with one
+   vector $v$ of entries $\pm 1$ on that field and a finite difference of the
+   gradient,
+   $c = \langle v, \nabla f(x + \epsilon v) - \nabla f(x)\rangle / (\epsilon \langle v, v\rangle)$,
+   with $\epsilon$ equal to $10^{-6}$ of the root mean square of the field.
+   This is an estimate of the mean of the diagonal of the Hessian block of
+   the field: the mean pointwise curvature of an objective that is local in
+   the field, and the mean of the spectrum of a translation-invariant
+   nonlocal operator. A sign is flipped, or the entry left out, where the
+   step would leave the bounds, so the objective is only evaluated inside
+   them. The two probes cost two evaluations of the gradient.
+3. In the scaled variables the curvatures are $c_g \sigma^2$ and
+   $c_h / \sigma^2$. They are equal for $\sigma = (c_h / c_g)^{1/4}$.
+4. If a curvature is not positive (or not finite), $\sigma$ equalises the
+   norms of the two fields at the restored point instead,
+   $\sigma = (\lVert g\rVert / \lVert h\rVert)^{1/2}$, and it is 1 if a field
+   vanishes there.
+
+The scale is set once, from the curvature at the starting point, and is the
+same for all nodes of a field. It balances the two fields against each other;
+it does not reduce the spread of curvature within a field, such as the
+spectrum of a nonlocal operator, which still determines the number of
+iterations. Because $\sigma$ multiplies one field and divides the other, `gtol`
+refers to gradients that are $\sigma$ times those with respect to $g$ and
+$1 / \sigma$ times those with respect to $h$.
+
+Things to know:
+
+- **Dependent normals.** The fits in steps 1 and 2 need the normals to be
+  linearly independent on the entries they use. If the condition number of
+  $N^{\mathsf T} N$ exceeds $10^{12}$ the solver stops with `success=False` and
+  a message that the Gram matrix of the normals is singular. This happens where
+  the feasible set is not smooth (for $\sum_i g_i h_i = V$ only at $g = h = 0$,
+  hence only for $V = 0$), where the constraints are redundant, and where fewer
+  entries than constraints are left inside the bounds.
+- **Local minima.** The feasible set is not convex. The solver finds a point
+  that satisfies the first-order optimality conditions, and which one depends
+  on `x0`.
+- **Accuracy.** The line search compares energies. Once the decrease that the
+  gradient promises is below the rounding error of $f$, no step is accepted
+  any more; a `gtol` below that level is never reached.
+- **Cost.** With a `QuadraticConstraint`, an iteration takes one call of
+  `hessp` for the search direction and $m$ per restored trial point when no
+  entry crosses a bound ($m + 1$ more for every update of the clipped set).
+  The products $B_j x$ at the new iterate follow from these by linearity; they
+  are recomputed every 20 iterations to bound the rounding error. With a
+  `BilinearConstraint` the products are local and `hessp` is never called.
 
 ## `tr_newton_bounded`
 
@@ -252,7 +403,169 @@ $\mu$ is the root of $\sum_i a_i \operatorname{clip}(y_i - \mu a_i, l_i, h_i) = 
 For $a \ge 0$ this sum is monotonic in $\mu$, and bisection finds $\mu$ in a
 bounded number of reductions.
 
+## `QuadraticConstraint`
+
+```python
+QuadraticConstraint(a, hessp, target, pnp=None)
+```
+
+The $m$ quadratic equalities
+$c_j(x) = \tfrac12 x^{\mathsf T} B_j x + \langle a_j, x\rangle = c_j^\star$.
+`a` is the local slice of the linear terms, an `(m, n)` array (or a vector for
+$m = 1$). `hessp(u)` returns the local `(m, n)` array of the products
+$B_j u$ for a local vector `u`; it may exchange ghost values, and every process
+calls it the same number of times. `hessp=None` means $B_j = 0$. `target` holds
+the global right-hand sides. Pass `pnp=Reduction(comm)` in parallel runs.
+
+| Method | Result |
+|--------|--------|
+| `value(x)` | the values $c_j(x)$ |
+| `products(u)` | local `(m, n)` array of the products $B_j u$ |
+| `normals(x, products=None)` | local `(n, m)` array $N(x)$ with columns $B_j x + a_j$ |
+| `multiplier(grad, x, mask=None, normals=None)` | least-squares multipliers $\lambda = (N^{\mathsf T} N)^{-1} N^{\mathsf T} g$ at `x`, with all sums restricted to `mask` |
+| `tangent(grad, x, mask=None, return_multiplier=False, normals=None)` | `grad` $- N \lambda$ |
+| `restore(y, lo=None, hi=None, zero_mask=None, max_rounds=20, max_newton=30, products=None, fixed=None)` | restoration of `y` onto the feasible set as `(x, products)` with the products $B_j x$, or `None` |
+| `project(y, lo=None, hi=None, zero_mask=None, max_rounds=20, max_newton=30, fixed=None)` | the point `x` of `restore`, or `None` |
+| `scaled(scale)` | the same constraints in the variables $u = x / s$ |
+| `check_hessp(rtol=1e-8, rng=None)` | raises `ValueError` unless `hessp` is linear and symmetric |
+| `m` | number of constraints |
+
+`multiplier` and `tangent` raise `numpy.linalg.LinAlgError` if the condition
+number of $N^{\mathsf T} N$ on `mask` exceeds $10^{12}$. The arguments
+`products` and `normals` take quantities that are already known and save the
+calls of `hessp` that would recompute them.
+
+**The constraint is quadratic by construction.** The class never evaluates the
+constraint itself: value, normals and restoration are all computed from `a` and
+`hessp`, and they describe the same function exactly if `hessp` is a constant
+symmetric linear map. `check_hessp` tests this with two random vectors $u$, $v$:
+linearity, $B_j (u - 2v) = B_j u - 2 B_j v$, and symmetry,
+$\langle v, B_j u\rangle = \langle u, B_j v\rangle$, at the cost of three calls
+of `hessp`. `l_bfgs_qc_projected` runs the test once before it starts. It
+catches a product that depends on the point or is affine, and a quadratic form
+represented by a non-symmetric matrix (for $\sum_i g_i h_i$, the product
+$(u_h, 0)$ in place of $(u_h, u_g)$). It cannot tell whether the quadratic
+function is the constraint you meant; compare `value(x)` with your own
+evaluation of the constraint to test that. A constraint with terms beyond
+second order is outside the scope of the class.
+
+**Restoration.** `restore` moves `y` onto the feasible set along a fixed
+direction, the normals at the clipped point, and clips the result:
+
+$$
+x(t) = \operatorname{clip}\bigl(y + N t,\ l,\ h\bigr),
+\qquad N = N(\hat y),\quad \hat y = \operatorname{clip}(y, l, h),
+\qquad c_j(x(t)) = c_j^\star ,
+$$
+
+with $t \in \mathbb{R}^m$. Entries in `zero_mask` are zero, and entries in
+`fixed` keep the value they have in $\hat y$; the rows of $N$ vanish for both.
+The equations for $t$ are solved as follows.
+
+1. Start from $t = 0$, $x = \hat y$.
+2. Let $\mathcal F$ be the entries of $y + N t$ strictly inside their bounds,
+   and $N_{\mathcal F}$ the normals restricted to them. As long as no entry
+   enters or leaves $\mathcal F$, a change $\delta$ of $t$ moves $x$ to
+   $x + N_{\mathcal F} \delta$, and because the constraints are quadratic their
+   residuals are the polynomials
+
+    $$
+    r_j(\delta) = c_j(x) - c_j^\star
+    + \bigl(N(x)^{\mathsf T} N_{\mathcal F}\, \delta\bigr)_j
+    + \tfrac12\, \delta^{\mathsf T} \bigl(N_{\mathcal F}^{\mathsf T} B_j N_{\mathcal F}\bigr)\, \delta .
+    $$
+
+    Their coefficients take $m$ calls of `hessp` (and one more for $B_j x$
+    unless it is known) and one reduction.
+3. Find the root $\delta$ of $r(\delta) = 0$ nearest to zero, in closed form
+   for $m = 1$ and by Newton's method otherwise, and set $t \leftarrow t + \delta$.
+4. If $\mathcal F$ and the clipped values are the same at the new $t$, the
+   polynomial was exact and $x(t)$ is returned, together with
+   $B_j x(t) = B_j x + \sum_k \delta_k B_j N_{\mathcal F, k}$. Otherwise repeat
+   from step 2 at the new $t$, at most `max_rounds` times.
+
+For one constraint the iteration is safeguarded. Once residuals of both signs
+have been seen, a $\delta$ that leaves the interval between them is replaced by
+its midpoint. If the polynomial has no real root, or no entry is in
+$\mathcal F$, $t$ moves on to where the next clipped entry enters its bounds.
+For $m = 1$ the first step also frees the entries that lie exactly on a bound
+and that the step, whose sign is that of $-(c(\hat y) - c^\star)$, moves into
+the box.
+
+`restore` returns `None` if this does not converge: there may be no root along
+the normals (for example when `y` lies across the cone $c(x) = 0$ from the
+feasible set), the normals on $\mathcal F$ may be dependent, or the clipped
+set may not settle within `max_rounds`.
+
+How this relates to the Euclidean projection, the nearest feasible point:
+
+- For a linear constraint ($B = 0$) the normals do not depend on the point,
+  and the restoration *is* the Euclidean projection, the one that
+  [`LinearConstraint.project`](#linearconstraint) computes by bisection.
+- Without active bounds it is a retraction that agrees with the Euclidean
+  projection to second order in the distance of `y` from the feasible set: it
+  moves along the normals at $\hat y$ instead of those at $x$ (see Absil and
+  Malick). For a sphere, $B = 1$ and $a = 0$, the two coincide.
+- In general it is a feasible point near `y`, not the nearest one. For the
+  line search of `l_bfgs_qc_projected` only feasibility and $R(x) = x$ to
+  first order around feasible points matter.
+
+## `BilinearConstraint`
+
+```python
+BilinearConstraint(n, target, weights=None, pnp=None)
+```
+
+The bilinear equality $\sum_i w_i g_i h_i = V$ of two fields. The local slice
+of the unknowns is $x = (g, h)$, the `n` local entries of $g$ followed by the
+`n` local entries of $h$; `weights` is the local slice of $w$ (default 1) and
+`target` the global $V$. It is a `QuadraticConstraint` with $a = 0$ and
+$B (u_g, u_h) = (w u_h, w u_g)$, with the same methods, so its normal at
+$(g, h)$ is $(w h, w g)$.
+
+Because $B$ couples only the two unknowns of one node, `restore` and `project`
+return the **exact Euclidean projection** of `y` $= (y^g, y^h)$ onto the
+feasible set, bounds included, and need neither `hessp` nor the normals. The
+projection minimises $\tfrac12 \lVert x - y\rVert^2$; with the multiplier $\mu$
+of the constraint, its Lagrangian is a sum over the nodes of
+
+$$
+q_i(g_i, h_i) = \tfrac12 (g_i - y^g_i)^2 + \tfrac12 (h_i - y^h_i)^2
++ \mu\, w_i\, g_i h_i .
+$$
+
+For $\lvert \mu w_i\rvert < 1$ this is strictly convex, and its minimiser over
+the box of node $i$ is in closed form: the stationary point
+
+$$
+g_i = \frac{y^g_i - \mu w_i\, y^h_i}{1 - \mu^2 w_i^2}, \qquad
+h_i = \frac{y^h_i - \mu w_i\, y^g_i}{1 - \mu^2 w_i^2}
+$$
+
+if it lies in the box, and otherwise the best of the minimisers along the four
+edges of the box, e.g.
+$h_i = \operatorname{clip}(y^h_i - \mu w_i\, g_i)$ on an edge of constant $g_i$.
+Entries in `zero_mask` and in `fixed` are boxes of zero width. The residual
+$\Phi(\mu) = \sum_i w_i g_i(\mu) h_i(\mu) - V$ is the derivative of a concave
+dual function and does not increase with $\mu$. Its root in
+$\lvert\mu\rvert < 1 / \max_i \lvert w_i\rvert$ gives the projection; it is
+bracketed by approaching the end of that interval geometrically and found by
+the Illinois variant of the regula falsi, with one reduction per evaluation of
+$\Phi$.
+
+If $\Phi$ has no root in that interval, the projection is not the solution of
+a convex problem. This happens for points far from the feasible set and for
+boxes that leave the constraint little room. The restoration of
+`QuadraticConstraint` is used in that case.
+
+`scaled(scale)` returns the `BilinearConstraint` with weights $w\, s_g s_h$, so
+the projection stays exact when `l_bfgs_qc_projected` is given a `scale`.
+
 ## References
+
+- P.-A. Absil, J. Malick, *Projection-like retractions on matrix manifolds*,
+  SIAM J. Optim. 22, 135 (2012),
+  [doi:10.1137/100802529](https://doi.org/10.1137/100802529).
 
 - J. Nocedal, *Updating quasi-Newton matrices with limited storage*,
   Math. Comp. 35, 773 (1980),

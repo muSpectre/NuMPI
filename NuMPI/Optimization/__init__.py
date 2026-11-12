@@ -36,6 +36,9 @@ Public entry points
                           optional box bounds (uses Armijo backtracking with
                           projection arc). Handles the same feasible set as
                           ``constrained_conjugate_gradients``.
+- ``l_bfgs_qc_projected`` : projected L-BFGS on quadratic equality
+                          constraints and optional box bounds (Armijo
+                          backtracking along a restoration arc).
 - ``tr_newton_bounded`` : bound-constrained trust-region Newton-CG
                           (Steihaug-Toint truncated CG on the free subspace,
                           matrix-free ``hessp``). Same feasible set and
@@ -59,6 +62,12 @@ Public entry points
 - ``LinearConstraint``  : utility encapsulating a single affine constraint
                           ``<a, x> = target`` with multiplier / tangent /
                           Euclidean-projection operations.
+- ``QuadraticConstraint`` : quadratic equality constraints
+                          ``x^T B_j x / 2 + <a_j, x> = target_j`` with joint
+                          multiplier / tangent / restoration operations.
+- ``BilinearConstraint`` : the quadratic constraint
+                          ``sum_i w_i g_i h_i = target`` of two fields, with
+                          the exact Euclidean projection onto the feasible set.
 
 MPI contract (all optimizers)
 -----------------------------
@@ -89,8 +98,10 @@ worked example: https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
 from .BoundedLBFGS import l_bfgs_bounded  # noqa F401
 from .BoundedTRNewtonCG import tr_newton_bounded  # noqa F401
 from .CCGWithoutRestart import constrained_conjugate_gradients  # noqa F401
-from .CCGWithRestart import \
-    constrained_conjugate_gradients_with_restart  # noqa F401
+from .CCGWithRestart import constrained_conjugate_gradients_with_restart  # noqa F401
 from .LBFGS import l_bfgs  # noqa F401
 from .LinearConstraint import LinearConstraint  # noqa F401
 from .ProjectedLBFGS import l_bfgs_projected  # noqa F401
+from .QCProjectedLBFGS import l_bfgs_qc_projected  # noqa F401
+from .QuadraticConstraint import BilinearConstraint  # noqa F401
+from .QuadraticConstraint import QuadraticConstraint  # noqa F401

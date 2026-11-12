@@ -368,32 +368,11 @@ def l_bfgs_projected(
                 y_hist.pop()
                 rho_hist.pop()
 
-        if xtol > 0:
-            if pnp.max(np.abs(x_new - x)) < xtol:
-                return _finish(
-                    True,
-                    x,
-                    phi,
-                    grad,
-                    lam,
-                    iteration,
-                    r_norm,
-                    "CONVERGENCE: NORM_OF_VARIABLE_STEP_<=_XTOL",
-                )
-
-        if ftol > 0:
-            if abs(phi_new - phi) < ftol * max(1, abs(phi_new), abs(phi)):
-                return _finish(
-                    True,
-                    x,
-                    phi,
-                    grad,
-                    lam,
-                    iteration,
-                    r_norm,
-                    "CONVERGENCE: REL_REDUCTION_OF_F_<=_FTOL",
-                )
-
+        # Accept the step before testing for convergence, so that every exit
+        # returns the iterate the line search accepted.
+        s_max = pnp.max(np.abs(s))
+        dphi = abs(phi_new - phi)
+        phi_scale = max(1, abs(phi_new), abs(phi))
         x, phi, grad, Gp, lam, r_free = (
             x_new,
             phi_new,
@@ -422,6 +401,30 @@ def l_bfgs_projected(
                 iteration,
                 r_norm,
                 "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_GTOL",
+            )
+
+        if xtol > 0 and s_max < xtol:
+            return _finish(
+                True,
+                x,
+                phi,
+                grad,
+                lam,
+                iteration,
+                r_norm,
+                "CONVERGENCE: NORM_OF_VARIABLE_STEP_<=_XTOL",
+            )
+
+        if ftol > 0 and dphi < ftol * phi_scale:
+            return _finish(
+                True,
+                x,
+                phi,
+                grad,
+                lam,
+                iteration,
+                r_norm,
+                "CONVERGENCE: REL_REDUCTION_OF_F_<=_FTOL",
             )
 
     return _finish(

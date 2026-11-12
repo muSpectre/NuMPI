@@ -10,15 +10,14 @@ active-set changes). Mirrors the structure of ``test_cg.py`` so the two CG
 variants are exercised on the same distributed problems.
 """
 
+from test.Optimization.MPIMinimizationProblems import MPI_Quadratic
+
 import numpy as np
 import pytest
 
+from NuMPI.Optimization.CCGWithRestart import constrained_conjugate_gradients_with_restart as ccg_restart
 from NuMPI.Testing.Assertions import assert_all_allclose, parallel_assert
 from NuMPI.Tools import Reduction
-from test.Optimization.MPIMinimizationProblems import MPI_Quadratic
-
-from NuMPI.Optimization.CCGWithRestart import \
-    constrained_conjugate_gradients_with_restart as ccg_restart
 
 try:
     import scipy.optimize
@@ -29,8 +28,7 @@ except ModuleNotFoundError:
 
 def test_exported_from_package():
     """The solver is reachable from the package namespace."""
-    from NuMPI.Optimization import \
-        constrained_conjugate_gradients_with_restart  # noqa: F401
+    from NuMPI.Optimization import constrained_conjugate_gradients_with_restart  # noqa: F401
 
 
 def test_ccg_restart(comm):

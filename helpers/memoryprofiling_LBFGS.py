@@ -22,12 +22,14 @@
 # SOFTWARE.
 #
 
-from NuMPI.Optimization import l_bfgs
-from test.Optimization.MPIMinimizationProblems import MPI_Quadratic
-from NuMPI import MPI
-from NuMPI.Tools import Reduction
-from memory_profiler import profile
 import sys
+from test.Optimization.MPIMinimizationProblems import MPI_Quadratic
+
+from memory_profiler import profile
+
+from NuMPI import MPI
+from NuMPI.Optimization import l_bfgs
+from NuMPI.Tools import Reduction
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()

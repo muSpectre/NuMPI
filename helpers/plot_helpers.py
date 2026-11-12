@@ -23,8 +23,8 @@
 #
 
 
-from matplotlib.patches import FancyArrowPatch
 import numpy as np
+from matplotlib.patches import FancyArrowPatch
 
 rec = 0
 
