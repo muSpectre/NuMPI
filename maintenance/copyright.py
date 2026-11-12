@@ -28,7 +28,7 @@ import os
 import sys
 from collections import defaultdict
 from datetime import datetime
-from subprocess import Popen, PIPE
+from subprocess import PIPE, Popen
 
 root = os.path.dirname(sys.argv[0])
 

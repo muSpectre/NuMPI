@@ -24,18 +24,15 @@
 #
 
 
-import pytest
+import test.Optimization.MinimizationProblems as mp
+import time
+from test.Optimization.MPIMinimizationProblems import MPI_Objective_Interface, MPI_Quadratic
 
 import numpy as np
-from NuMPI.Tools import Reduction
-from test.Optimization.MPIMinimizationProblems import (
-    MPI_Objective_Interface, MPI_Quadratic
-)
-
-import time
-import test.Optimization.MinimizationProblems as mp
+import pytest
 
 from NuMPI.Optimization.LBFGS import l_bfgs
+from NuMPI.Tools import Reduction
 
 
 def timer(fun, *args, **kwargs):

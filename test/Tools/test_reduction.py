@@ -23,9 +23,9 @@
 # SOFTWARE.
 #
 
-import pytest
 import numpy as np
 import numpy.ma as ma
+import pytest
 
 from NuMPI.Tools import Reduction
 

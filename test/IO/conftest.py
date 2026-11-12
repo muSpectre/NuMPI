@@ -1,2 +1,1 @@
-from .fixtures import (datagrid, globaldata2d, globaldata3d,  # noqa: F401
-                       multicomponent_globaldata, npyfile)
+from .fixtures import datagrid, globaldata2d, globaldata3d, multicomponent_globaldata, npyfile  # noqa: F401

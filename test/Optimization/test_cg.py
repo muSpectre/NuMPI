@@ -13,8 +13,7 @@ except ModuleNotFoundError:
 from test.Optimization.MPIMinimizationProblems import MPI_Quadratic
 
 from NuMPI.Optimization import LinearConstraint
-from NuMPI.Optimization.CCGWithoutRestart import \
-    constrained_conjugate_gradients
+from NuMPI.Optimization.CCGWithoutRestart import constrained_conjugate_gradients
 from NuMPI.Tools import Reduction
 
 

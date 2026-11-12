@@ -26,12 +26,13 @@ This runs LBFGS and scipy L-BFGS-B in serial and compare the number of iteration
 """
 
 import os
-from NuMPI.Optimization import l_bfgs
-from test.Optimization.MinimizationProblems import Trigonometric, Extended_Rosenbrock
+from test.Optimization.MinimizationProblems import Extended_Rosenbrock, Trigonometric
+
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 
-import matplotlib.pyplot as plt
+from NuMPI.Optimization import l_bfgs
 
 # import sys
 n = 10 ** 3

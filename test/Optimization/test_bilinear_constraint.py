@@ -33,8 +33,7 @@ followed by its entries of h.
 import numpy as np
 import pytest
 
-from NuMPI.Optimization import (BilinearConstraint, LinearConstraint,
-                                QuadraticConstraint, l_bfgs_qc_projected)
+from NuMPI.Optimization import BilinearConstraint, LinearConstraint, QuadraticConstraint, l_bfgs_qc_projected
 from NuMPI.Testing.Assertions import assert_all_allclose, parallel_assert
 from NuMPI.Tools import Reduction
 

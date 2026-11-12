@@ -33,11 +33,8 @@ import pytest
 
 import NuMPI
 from NuMPI import MPI
-from NuMPI.IO.NPY import (MPIFileTypeError, NPYFile, load_npy, mpi_open,
-                          save_npy)
-from NuMPI.Testing.Assertions import (assert_all_allclose,
-                                      assert_all_array_equal,
-                                      assert_one_array_equal)
+from NuMPI.IO.NPY import MPIFileTypeError, NPYFile, load_npy, mpi_open, save_npy
+from NuMPI.Testing.Assertions import assert_all_allclose, assert_all_array_equal, assert_one_array_equal
 from NuMPI.Tools import Reduction
 
 testdir = os.path.dirname(os.path.realpath(__file__))

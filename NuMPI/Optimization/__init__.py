@@ -98,8 +98,7 @@ worked example: https://muspectre.github.io/NuMPI/optimization/#mpi-conventions
 from .BoundedLBFGS import l_bfgs_bounded  # noqa F401
 from .BoundedTRNewtonCG import tr_newton_bounded  # noqa F401
 from .CCGWithoutRestart import constrained_conjugate_gradients  # noqa F401
-from .CCGWithRestart import \
-    constrained_conjugate_gradients_with_restart  # noqa F401
+from .CCGWithRestart import constrained_conjugate_gradients_with_restart  # noqa F401
 from .LBFGS import l_bfgs  # noqa F401
 from .LinearConstraint import LinearConstraint  # noqa F401
 from .ProjectedLBFGS import l_bfgs_projected  # noqa F401
