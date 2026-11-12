@@ -239,7 +239,41 @@ $s \nabla f$, the bounds $l / s$ and $h / s$, the constraint
 $\tfrac12 u^{\mathsf T} (s B_j s) u + \langle s a_j, u\rangle$, and everything
 above, including `gtol`, `xtol` and `max_grad`, refers to $u$. `x`, `jac` and
 the argument of `callback` are returned in the original variables, and the
-multipliers do not depend on the scale.
+multipliers do not depend on the scale. The result holds the scale that was
+used as `scale`.
+
+For a [`BilinearConstraint`](#bilinearconstraint), `scale="auto"` lets the
+solver balance the two fields itself. The constraint $\sum_i w_i g_i h_i = V$
+does not change under $g \to g / \sigma$, $h \to \sigma h$, so the scale is
+$\sigma$ on the entries of $g$ and $1 / \sigma$ on those of $h$, and only the
+one number $\sigma$ is chosen:
+
+1. `x0` is restored onto the feasible set, in the original variables.
+2. The curvature of the objective along each field is probed there with one
+   vector $v$ of entries $\pm 1$ on that field and a finite difference of the
+   gradient,
+   $c = \langle v, \nabla f(x + \epsilon v) - \nabla f(x)\rangle / (\epsilon \langle v, v\rangle)$,
+   with $\epsilon$ equal to $10^{-6}$ of the root mean square of the field.
+   This is an estimate of the mean of the diagonal of the Hessian block of
+   the field: the mean pointwise curvature of an objective that is local in
+   the field, and the mean of the spectrum of a translation-invariant
+   nonlocal operator. A sign is flipped, or the entry left out, where the
+   step would leave the bounds, so the objective is only evaluated inside
+   them. The two probes cost two evaluations of the gradient.
+3. In the scaled variables the curvatures are $c_g \sigma^2$ and
+   $c_h / \sigma^2$. They are equal for $\sigma = (c_h / c_g)^{1/4}$.
+4. If a curvature is not positive (or not finite), $\sigma$ equalises the
+   norms of the two fields at the restored point instead,
+   $\sigma = (\lVert g\rVert / \lVert h\rVert)^{1/2}$, and it is 1 if a field
+   vanishes there.
+
+The scale is set once, from the curvature at the starting point, and is the
+same for all nodes of a field. It balances the two fields against each other;
+it does not reduce the spread of curvature within a field, such as the
+spectrum of a nonlocal operator, which still determines the number of
+iterations. Because $\sigma$ multiplies one field and divides the other, `gtol`
+refers to gradients that are $\sigma$ times those with respect to $g$ and
+$1 / \sigma$ times those with respect to $h$.
 
 Things to know:
 

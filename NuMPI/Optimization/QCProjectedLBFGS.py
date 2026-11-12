@@ -43,7 +43,7 @@ import numpy as np
 from ..Tools import Reduction
 from ..Tools.Reduction import same_reduction_group
 from ._lbfgs_helpers import _twoloop_direction
-from .QuadraticConstraint import _active
+from .QuadraticConstraint import BilinearConstraint, _active
 from .Result import OptimizeResult
 
 _log = logging.getLogger(__name__)
@@ -51,6 +51,80 @@ _log = logging.getLogger(__name__)
 # The products B_j x are carried from one iterate to the next by linearity;
 # they are recomputed after this many iterations to bound the rounding error.
 _REFRESH_PRODUCTS = 20
+
+
+def _balance_fields(fun_grad, x, grad, n, lo, hi, zero_mask, pnp, rng):
+    r"""
+    Scale that balances the curvature of the objective along the two fields
+    of a bilinear constraint.
+
+    The bilinear constraint does not change under :math:`g \to g / \sigma`,
+    :math:`h \to \sigma h`. The curvature :math:`c` of the objective along
+    each field is probed with one vector :math:`v` of entries :math:`\pm 1`
+    on that field and a finite difference of the gradient,
+    :math:`c = \langle v, \nabla f(x + \epsilon v) - \nabla f(x)\rangle
+    / (\epsilon \langle v, v\rangle)`, the mean of the diagonal of the
+    Hessian block of the field. In the variables :math:`g / \sigma` and
+    :math:`\sigma h` the curvatures are :math:`c_g \sigma^2` and
+    :math:`c_h / \sigma^2`, which are equal for
+    :math:`\sigma = (c_h / c_g)^{1/4}`. Each probe stays inside the bounds.
+
+    If a curvature is not positive, :math:`\sigma` instead equalises the
+    norms of the two fields at ``x``, and it is 1 if a field vanishes.
+
+    Args:
+        fun_grad: ``fun_grad(x)`` returns the energy and the flat local
+            gradient at the flat local ``x``.
+        x: Flat local slice of a feasible point, :math:`g` followed by
+            :math:`h`.
+        grad: Gradient at ``x``.
+        n: Local number of nodes.
+        lo, hi: Flat bounds, scalar, array or ``None``.
+        zero_mask: Flat boolean array of the entries pinned to zero.
+        pnp: Reduction wrapper.
+        rng: ``numpy.random.Generator`` of the probes.
+
+    Returns:
+        ``(scale, rule)``: the flat local scale, :math:`\sigma` on the
+        entries of :math:`g` and :math:`1 / \sigma` on those of :math:`h`,
+        and the rule that set it, ``"curvature"``, ``"norm"`` or ``"none"``.
+    """
+    lo_arr = np.broadcast_to(np.asarray(-np.inf if lo is None else lo, dtype=float), x.shape)
+    hi_arr = np.broadcast_to(np.asarray(np.inf if hi is None else hi, dtype=float), x.shape)
+    fields = (slice(0, n), slice(n, 2 * n))
+    norm2 = [float(pnp.sum(x[field] ** 2)) for field in fields]
+    count = float(pnp.sum(np.full(n, 1.0)))
+
+    curvature = []
+    for field, x2 in zip(fields, norm2):
+        # Step of 1e-6 of the typical magnitude of the field, along random
+        # signs that are flipped, or dropped, where the step would leave the
+        # box.
+        eps = 1e-6 * (np.sqrt(x2 / count) if x2 > 0.0 and count > 0.0 else 1.0)
+        v = np.zeros(x.shape)
+        v[field] = rng.choice([-1.0, 1.0], n)
+        v = np.where(x + eps * v > hi_arr, -1.0, v)
+        v = np.where((v < 0.0) & (x + eps * v < lo_arr), 1.0, v)
+        v = np.where((x + eps * v > hi_arr) | (x + eps * v < lo_arr), 0.0, v)
+        if zero_mask is not None:
+            v = np.where(zero_mask, 0.0, v)
+        v[fields[0] if field is fields[1] else fields[1]] = 0.0
+        with np.errstate(all="ignore"):
+            _, grad_probe = fun_grad(x + eps * v)
+            vv = float(pnp.sum(v * v))
+            c = float(pnp.sum(v * (grad_probe - grad))) / (eps * vv) if vv > 0.0 else np.nan
+        curvature.append(c)
+
+    c_g, c_h = curvature
+    if np.isfinite(c_g) and np.isfinite(c_h) and c_g > 0.0 and c_h > 0.0:
+        sigma, rule = (c_h / c_g) ** 0.25, "curvature"
+    elif norm2[0] > 0.0 and norm2[1] > 0.0:
+        sigma, rule = (norm2[0] / norm2[1]) ** 0.25, "norm"
+    else:
+        sigma, rule = 1.0, "none"
+    if not (np.isfinite(sigma) and sigma > 0.0):
+        sigma, rule = 1.0, "none"
+    return np.concatenate([np.full(n, sigma), np.full(n, 1.0 / sigma)]), rule
 
 
 def l_bfgs_qc_projected(
@@ -98,7 +172,14 @@ def l_bfgs_qc_projected(
             like ``x0``. The solver iterates on ``u = x / s``: the tangent
             projection, the restoration, the L-BFGS update, ``gtol`` and
             ``xtol`` all refer to ``u``. Choose ``s`` as the typical
-            magnitude of each unknown. ``None`` means 1.
+            magnitude of each unknown. ``None`` means 1. ``"auto"``, for a
+            ``BilinearConstraint`` only, sets ``s`` to ``sigma`` on the first
+            field and ``1 / sigma`` on the second, which leaves the constraint
+            unchanged, with ``sigma`` chosen such that the objective has the
+            same mean curvature along both fields at the restored ``x0``. This
+            takes two more evaluations of the gradient, at points inside the
+            bounds. If a curvature is not positive, ``sigma`` equalises the
+            norms of the two fields instead.
         gtol: Tolerance on the infinity norm of the reduced gradient with the
             held entries zeroed (with ``scale``, of ``s`` times that
             gradient).
@@ -116,16 +197,18 @@ def l_bfgs_qc_projected(
     Returns:
         ``OptimizeResult`` with ``x``, ``fun``, ``jac``, ``multiplier`` (one
         entry per constraint component), ``nit``, ``success``, ``message``,
-        ``max_grad`` and ``constr_violation`` (the largest absolute residual
-        of the constraint components at ``x``).
+        ``max_grad``, ``constr_violation`` (the largest absolute residual
+        of the constraint components at ``x``) and ``scale`` (the scale that
+        was used, shaped like ``x``, or ``None``).
 
     Raises:
         RuntimeError: ``comm`` and ``pnp`` are both given, or ``x0`` cannot be
             restored onto the feasible set.
         ValueError: The constraint is missing, its reduction does not span
             the same ranks as the solver's, its ``hessp`` is not a symmetric
-            linear map (``QuadraticConstraint.check_hessp``), or ``scale`` is
-            not positive and finite.
+            linear map (``QuadraticConstraint.check_hessp``), ``scale`` is
+            not positive and finite, or ``scale="auto"`` is asked for a
+            constraint that is not a ``BilinearConstraint``.
     """
     if comm is not None:
         if pnp is not None:
@@ -158,34 +241,69 @@ def l_bfgs_qc_projected(
         None if zero_mask is None else np.asarray(zero_mask).ravel().astype(bool)
     )
 
+    if jac is True or jac is None:
+
+        def fun_grad_unscaled(x):
+            phi, g = fun(x.reshape(original_shape), *args)
+            return phi, np.asarray(g).ravel()
+
+    elif jac is False:
+        raise NotImplementedError("Numerical evaluation of gradient not implemented")
+    else:
+
+        def fun_grad_unscaled(x):
+            xr = x.reshape(original_shape)
+            return fun(xr, *args), np.asarray(jac(xr, *args)).ravel()
+
     # With a scale s the iteration runs on u = x / s: the objective gradient
     # becomes s * grad, the bounds lo / s and hi / s, and the constraint the
     # one in u. Below, `x` and `grad` are these scaled quantities.
+    start = None
     if scale is None:
         s = 1.0
+    elif isinstance(scale, str):
+        if scale != "auto":
+            raise ValueError(f"l_bfgs_qc_projected: unknown scale '{scale}'")
+        if not isinstance(qc, BilinearConstraint):
+            raise ValueError(
+                'l_bfgs_qc_projected: scale="auto" balances the two fields of a '
+                "BilinearConstraint; pass an array for other constraints"
+            )
+        # The curvatures are probed at the feasible starting point, which then
+        # also starts the iteration: it stays feasible under this scale.
+        x_start = np.asarray(x0, dtype=float).ravel()
+        restored = qc.restore(
+            x_start, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask,
+            max_rounds=max_restore_rounds,
+        )
+        if restored is None:
+            raise RuntimeError(
+                "l_bfgs_qc_projected: x0 cannot be restored onto the feasible set; "
+                f"constraint residuals at x0: {qc.value(x_start) - qc.target}"
+            )
+        x_start = restored[0]
+        phi_start, grad_start = fun_grad_unscaled(x_start)
+        rank = 0 if comm is None else comm.Get_rank()
+        s, rule = _balance_fields(
+            fun_grad_unscaled, x_start, grad_start, qc.n, bounds_lo, bounds_hi,
+            zero_mask, pnp, np.random.default_rng([rank, 20261112]),
+        )
+        _log.info(f"scale='auto': sigma = {s[0] if s.size else 1.0:g} from rule '{rule}'")
+        start = (x_start / s, phi_start, s * grad_start)
     else:
         s = np.broadcast_to(
             np.asarray(scale, dtype=float), original_shape
         ).ravel().copy()
         if not (np.all(np.isfinite(s)) and np.all(s > 0.0)):
             raise ValueError("l_bfgs_qc_projected: scale must be positive and finite")
+    if scale is not None:
         qc = qc.scaled(s)
         bounds_lo = None if bounds_lo is None else bounds_lo / s
         bounds_hi = None if bounds_hi is None else bounds_hi / s
 
-    if jac is True or jac is None:
-
-        def fun_grad(x):
-            phi, g = fun((s * x).reshape(original_shape), *args)
-            return phi, s * np.asarray(g).ravel()
-
-    elif jac is False:
-        raise NotImplementedError("Numerical evaluation of gradient not implemented")
-    else:
-
-        def fun_grad(x):
-            xr = (s * x).reshape(original_shape)
-            return fun(xr, *args), s * np.asarray(jac(xr, *args)).ravel()
+    def fun_grad(x):
+        phi, g = fun_grad_unscaled(s * x)
+        return phi, s * g
 
     def restore(y, products=None, fixed=None):
         return qc.restore(
@@ -227,18 +345,23 @@ def l_bfgs_qc_projected(
             success, np.asarray(s * x).reshape(original_shape), phi,
             np.asarray(grad / s).reshape(original_shape), lam, nit, residual,
             violation, message,
+            None if scale is None else np.broadcast_to(s, x.shape).reshape(original_shape),
         )
 
-    x = np.asarray(x0, dtype=float).ravel() / s
-    restored = restore(x)
-    if restored is None:
-        raise RuntimeError(
-            "l_bfgs_qc_projected: x0 cannot be restored onto the feasible set; "
-            f"constraint residuals at x0: {qc.value(x) - qc.target}"
-        )
-    x, Bx = restored
+    if start is None:
+        x = np.asarray(x0, dtype=float).ravel() / s
+        restored = restore(x)
+        if restored is None:
+            raise RuntimeError(
+                "l_bfgs_qc_projected: x0 cannot be restored onto the feasible set; "
+                f"constraint residuals at x0: {qc.value(x) - qc.target}"
+            )
+        x, Bx = restored
+        phi, grad = fun_grad(x)
+    else:
+        x, phi, grad = start
+        Bx = qc.products(x)
     N = qc.normals(x, products=Bx)
-    phi, grad = fun_grad(x)
     st = state(x, grad, N)
     if st is None:
         return _finish(
@@ -386,7 +509,7 @@ def l_bfgs_qc_projected(
     )
 
 
-def _result(success, x, phi, grad, lam, nit, residual, violation, message):
+def _result(success, x, phi, grad, lam, nit, residual, violation, message, scale):
     return OptimizeResult(
         {
             "success": bool(success),
@@ -398,5 +521,6 @@ def _result(success, x, phi, grad, lam, nit, residual, violation, message):
             "message": message,
             "max_grad": float(residual),
             "constr_violation": float(violation),
+            "scale": scale,
         }
     )

@@ -16,7 +16,8 @@ v0.19.0 (not yet released)
   solved in closed form and safeguarded, and for a linear constraint the result
   is the Euclidean projection
 - ENH: `l_bfgs_qc_projected(scale=...)` iterates on the unknowns divided by a
-  scale
+  scale; `scale="auto"` balances the two fields of a `BilinearConstraint` from
+  two probes of the curvature of the objective
 - ENH: `l_bfgs_qc_projected` reuses Hessian products by linearity: one product
   per search direction and one per constraint and restored trial point
 - ENH: `QuadraticConstraint.check_hessp` tests that the Hessian product is a

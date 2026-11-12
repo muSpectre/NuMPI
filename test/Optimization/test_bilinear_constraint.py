@@ -74,11 +74,15 @@ def _objective(nodes, pnp, scale=1.0):
 
     def fun_grad(xs):
         g, h = np.split(xs / scale, 2)
-        energy = (
-            0.25 * (g - p) ** 4 + 0.5 * (h - q) ** 2 + np.cosh(0.3 * g * h)
-        )
-        coupling = 0.3 * np.sinh(0.3 * g * h)
-        grad = np.concatenate([(g - p) ** 3 + coupling * h, (h - q) + coupling * g])
+        # A far trial point of a line search may overflow; the infinite energy
+        # makes the solver reject it.
+        with np.errstate(over="ignore", invalid="ignore"):
+            energy = (
+                0.25 * (g - p) ** 4 + 0.5 * (h - q) ** 2 + np.cosh(0.3 * g * h)
+            )
+            coupling = 0.3 * np.sinh(0.3 * g * h)
+            grad = np.concatenate(
+                [(g - p) ** 3 + coupling * h, (h - q) + coupling * g])
         return pnp.sum(energy).item(), grad / scale
 
     return fun_grad, np.concatenate([p, q]), k
@@ -266,33 +270,196 @@ def test_vanishing_normal_ends_the_run(comm, kind):
     parallel_assert(comm, "SINGULAR" in res.message, res.message)
 
 
-@pytest.mark.parametrize("kind", KINDS)
-def test_scale_restores_the_convergence_of_a_badly_scaled_problem(comm, kind):
-    # g -> 100 g, h -> h / 100 leaves sum g h and the minimum unchanged.
+# Badly scaled problems: g -> factor * g, h -> h / factor leaves sum g h, the
+# minimum and the multiplier unchanged, but multiplies the curvature of the
+# objective along g by factor^-2 and along h by factor^2, and the condition
+# number of its Hessian by up to factor^4.
+FACTORS = [10.0, 1000.0, 1e-3]
+BOXES = {"free": (None, None), "box": (0.0, 2.0)}
+
+
+def _badly_scaled(comm, kind, factor, box):
+    """
+    The reference problem and its badly scaled twin.
+
+    Returns:
+        ``(reference, twin, scale, bounds)``. ``reference()`` solves the
+        well-scaled problem; ``twin(scale=None)`` the same problem in the
+        variables ``scale * (g, h)``, where ``scale`` holds ``factor`` for g
+        and ``1 / factor`` for h; ``bounds`` are the bounds of the twin.
+    """
     pnp = Reduction(comm)
     nodes = _slice(comm)
+    lo, hi = BOXES[box]
     fun_grad, x0, k = _objective(nodes, pnp)
-    scale = np.concatenate([np.full(k, 100.0), np.full(k, 0.01)])
-    fun_grad_scaled, _, _ = _objective(nodes, pnp, scale=scale)
-    kwargs = dict(bounds_lo=0.0, comm=comm, gtol=1e-7, maxiter=150)
+    scale = np.concatenate([np.full(k, factor), np.full(k, 1.0 / factor)])
+    fun_grad_twin, _, _ = _objective(nodes, pnp, scale=scale)
+    bounds = (None if lo is None else lo * scale, None if hi is None else hi * scale)
+
+    def reference():
+        return l_bfgs_qc_projected(
+            fun_grad, x0, _constraint(kind, k, 6.0, pnp), bounds_lo=lo,
+            bounds_hi=hi, comm=comm, gtol=1e-7)
+
+    def twin(**kwargs):
+        return l_bfgs_qc_projected(
+            fun_grad_twin, x0 * scale, _constraint(kind, k, 6.0, pnp),
+            bounds_lo=bounds[0], bounds_hi=bounds[1], comm=comm, gtol=1e-7,
+            **kwargs)
+
+    return reference, twin, scale, bounds
+
+
+# The scale that undoes the factor exactly, and the one the solver finds for
+# the two fields of a BilinearConstraint by itself.
+RULES = [("quadratic", "given"), ("bilinear", "given"), ("bilinear", "auto")]
+
+
+@pytest.mark.parametrize("kind, rule", RULES, ids=["-".join(r) for r in RULES])
+@pytest.mark.parametrize("box", BOXES)
+@pytest.mark.parametrize("factor", FACTORS)
+def test_scale_solves_a_badly_scaled_problem_like_the_well_scaled_one(
+        comm, kind, rule, box, factor):
+    # With the given scale the solver iterates on the variables of the
+    # reference problem, so it takes the same path up to rounding. The
+    # automatic scale balances the curvatures of the objective along g and h,
+    # which are of the same order in the reference problem.
+    reference, twin, scale, (lo, hi) = _badly_scaled(comm, kind, factor, box)
+    pnp = Reduction(comm)
+
+    ref = reference()
+    res = twin(scale=scale if rule == "given" else "auto")
+
+    parallel_assert(comm, ref.success, ref.message)
+    parallel_assert(comm, res.success, res.message)
+    # The automatic scale starts from another feasible point and iterates on
+    # other variables than the reference, so its path differs.
+    most = ref.nit + 10 if rule == "given" else 2 * ref.nit + 10
+    parallel_assert(comm, res.nit <= most, f"{res.nit} vs {ref.nit} iterations")
+    parallel_assert(comm, res.constr_violation < 1e-11, str(res.constr_violation))
+    parallel_assert(comm, abs(res.fun - ref.fun) < 1e-9 * abs(ref.fun))
+    if rule == "given":
+        parallel_assert(comm, abs(res.max_grad - ref.max_grad) < 1e-7)
+        parallel_assert(comm, np.array_equal(res.scale, scale))
+    else:
+        # sigma on g and 1 / sigma on h, with sigma of the order of the factor.
+        sigma, inverse = np.split(res.scale, 2)
+        parallel_assert(comm, np.all(sigma == sigma[:1]) and np.all(inverse == inverse[:1]))
+        parallel_assert(comm, np.allclose(sigma * inverse, 1.0, rtol=1e-14))
+        parallel_assert(
+            comm, np.all((sigma > factor / 3.0) & (sigma < factor * 3.0)), str(sigma[:1]))
+    parallel_assert(comm, np.allclose(res.multiplier, ref.multiplier, atol=1e-5))
+    # x and jac come back in the variables of the twin. The minimum has soft
+    # directions, so the points agree less closely than the energies.
+    assert_all_allclose(comm, res.x / scale, ref.x, atol=1e-3)
+    assert_all_allclose(comm, res.jac * scale, ref.jac, atol=1e-3)
+    energy, grad = _objective(_slice(comm), pnp, scale=scale)[0](res.x)
+    parallel_assert(comm, res.fun == energy)
+    assert_all_allclose(comm, res.jac, grad, atol=0.0)
+    if lo is not None:
+        parallel_assert(
+            comm, np.all(res.x >= lo) and np.all(res.x <= hi * (1.0 + 1e-14)))
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("box", BOXES)
+@pytest.mark.parametrize("factor", FACTORS)
+def test_badly_scaled_problem_is_out_of_reach_without_scale(comm, kind, box, factor):
+    # Documents the sensitivity that `scale` removes: within five times the
+    # iterations of the reference, the solver has not converged.
+    reference, twin, _, _ = _badly_scaled(comm, kind, factor, box)
+
+    ref = reference()
+    res = twin(maxiter=5 * ref.nit)
+
+    parallel_assert(comm, ref.success, ref.message)
+    parallel_assert(comm, not res.success, f"converged in {res.nit} iterations")
+    # What it returns is feasible all the same.
+    parallel_assert(comm, res.constr_violation < 1e-11, str(res.constr_violation))
+
+
+def test_automatic_scale_needs_the_two_fields_of_a_bilinear_constraint(comm):
+    pnp = Reduction(comm)
+    fun_grad, x0, k = _objective(_slice(comm), pnp)
+
+    with pytest.raises(ValueError, match="BilinearConstraint"):
+        l_bfgs_qc_projected(
+            fun_grad, x0, _constraint("quadratic", k, 6.0, pnp), scale="auto",
+            comm=comm)
+    with pytest.raises(ValueError, match="unknown scale"):
+        l_bfgs_qc_projected(
+            fun_grad, x0, _constraint("bilinear", k, 6.0, pnp), scale="automatic",
+            comm=comm)
+
+
+def test_automatic_scale_probes_the_objective_inside_the_bounds(comm):
+    # An objective that is not defined outside the box, started with entries
+    # on both bounds.
+    pnp = Reduction(comm)
+    fun_grad, x0, k = _objective(_slice(comm), pnp)
+    lo, hi = 0.2, 1.2
+    outside = [0]
+
+    def guarded(x):
+        outside[0] += np.count_nonzero((x < lo) | (x > hi))
+        return fun_grad(x)
+
+    res = l_bfgs_qc_projected(
+        guarded, np.clip(x0, lo, hi), _constraint("bilinear", k, 6.0, pnp),
+        bounds_lo=lo, bounds_hi=hi, scale="auto", comm=comm, gtol=1e-7)
+
+    parallel_assert(comm, res.success, res.message)
+    parallel_assert(comm, pnp.sum(np.array([outside[0]])) == 0)
+
+
+def test_automatic_scale_equalises_the_norms_without_positive_curvature(comm):
+    # Linear in g: the curvature along g is zero, so the scale comes from the
+    # norms of g and h at the restored starting point.
+    pnp = Reduction(comm)
+    nodes = _slice(comm)
+    k = nodes.size
+    rng = np.random.default_rng(3)
+    p = rng.uniform(0.5, 1.5, N_NODES)[nodes]
+    q = rng.uniform(0.5, 1.5, N_NODES)[nodes]
+    x0 = np.concatenate([np.full(k, 40.0), np.full(k, 0.1)])
+    lo = 0.0
+    hi = np.concatenate([np.full(k, 80.0), np.full(k, 2.0)])
+
+    def fun_grad(x):
+        g, h = np.split(x, 2)
+        energy = p * g + 0.5 * (h - q) ** 2
+        return pnp.sum(energy).item(), np.concatenate([p, h - q])
+
+    res = l_bfgs_qc_projected(
+        fun_grad, x0, _constraint("bilinear", k, 6.0, pnp), bounds_lo=lo,
+        bounds_hi=hi, scale="auto", comm=comm, gtol=1e-7)
+
+    g, h = np.split(BilinearConstraint(k, 6.0, pnp=pnp).project(x0, lo=lo, hi=hi), 2)
+    sigma = (pnp.sum(g * g) / pnp.sum(h * h)) ** 0.25
+    parallel_assert(comm, res.success, res.message)
+    parallel_assert(comm, np.allclose(res.scale[:k], sigma) and sigma > 5.0, str(sigma))
+    parallel_assert(comm, np.allclose(res.scale[k:], 1.0 / sigma))
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_scalar_scale_and_bad_scale(comm, kind):
+    # A scalar scale applies to every unknown; it does not change the balance
+    # of g and h, and the result is that of the unscaled run.
+    pnp = Reduction(comm)
+    fun_grad, x0, k = _objective(_slice(comm), pnp)
+    kwargs = dict(bounds_lo=0.0, bounds_hi=2.0, comm=comm, gtol=1e-7)
 
     ref = l_bfgs_qc_projected(fun_grad, x0, _constraint(kind, k, 6.0, pnp), **kwargs)
-    scaled = l_bfgs_qc_projected(
-        fun_grad_scaled, x0 * scale, _constraint(kind, k, 6.0, pnp), scale=scale,
-        **kwargs)
-    unscaled = l_bfgs_qc_projected(
-        fun_grad_scaled, x0 * scale, _constraint(kind, k, 6.0, pnp), **kwargs)
+    res = l_bfgs_qc_projected(
+        fun_grad, x0, _constraint(kind, k, 6.0, pnp), scale=1.0, **kwargs)
 
-    parallel_assert(comm, ref.success and scaled.success, scaled.message)
-    parallel_assert(comm, scaled.nit <= ref.nit + 5, f"{scaled.nit} {ref.nit}")
-    # gtol bounds scale * gradient, which is 100 times looser for h.
-    assert_all_allclose(comm, scaled.x / scale, ref.x, atol=1e-3)
-    assert_all_allclose(comm, scaled.jac * scale, ref.jac, atol=1e-3)
-    parallel_assert(comm, np.allclose(scaled.multiplier, ref.multiplier, atol=1e-4))
-    parallel_assert(comm, scaled.constr_violation < 1e-11)
-    # Without `scale` the same problem is out of reach.
-    parallel_assert(
-        comm, not unscaled.success or unscaled.nit > 3 * ref.nit, str(unscaled.nit))
+    parallel_assert(comm, res.success and res.nit == ref.nit, res.message)
+    assert_all_allclose(comm, res.x, ref.x, atol=1e-12)
+
+    for bad in (0.0, -1.0, np.inf, np.nan):
+        with pytest.raises(ValueError, match="scale"):
+            l_bfgs_qc_projected(
+                fun_grad, x0, _constraint(kind, k, 6.0, pnp), scale=bad, **kwargs)
 
 
 @pytest.mark.parametrize("kind", KINDS)
