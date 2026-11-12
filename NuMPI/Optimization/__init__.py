@@ -65,6 +65,9 @@ Public entry points
 - ``QuadraticConstraint`` : quadratic equality constraints
                           ``x^T B_j x / 2 + <a_j, x> = target_j`` with joint
                           multiplier / tangent / restoration operations.
+- ``BilinearConstraint`` : the quadratic constraint
+                          ``sum_i w_i g_i h_i = target`` of two fields, with
+                          the exact Euclidean projection onto the feasible set.
 
 MPI contract (all optimizers)
 -----------------------------
@@ -101,4 +104,5 @@ from .LBFGS import l_bfgs  # noqa F401
 from .LinearConstraint import LinearConstraint  # noqa F401
 from .ProjectedLBFGS import l_bfgs_projected  # noqa F401
 from .QCProjectedLBFGS import l_bfgs_qc_projected  # noqa F401
+from .QuadraticConstraint import BilinearConstraint  # noqa F401
 from .QuadraticConstraint import QuadraticConstraint  # noqa F401
