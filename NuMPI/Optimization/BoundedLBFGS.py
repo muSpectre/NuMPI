@@ -39,6 +39,11 @@ Each iteration:
 3. Backtracking Armijo line search with the projection arc
    ``x_try = Pi_F(x + alpha * d)``, where ``Pi_F`` is elementwise clipping.
 
+Optional preconditioner ``precond`` (an SPD operator M, e.g. a Helmholtz /
+Sobolev smoother of the gradient): the initial inverse Hessian of the
+two-loop recursion becomes ``gamma P M P`` instead of ``gamma I``, with
+``P`` the 0/1 mask of the free components and ``gamma = <s, y>/<y, PMP y>``.
+
 Convergence is measured by the infinity-norm of ``r_free`` ("free KKT
 residual"), which is scale-invariant in N.
 
@@ -50,7 +55,7 @@ import logging
 import numpy as np
 
 from ..Tools import Reduction
-from ._lbfgs_helpers import _armijo, _kkt_residual, _twoloop_direction
+from ._lbfgs_helpers import _armijo, _free_mask, _kkt_residual, _twoloop_direction
 from .Result import OptimizeResult
 
 _log = logging.getLogger(__name__)
@@ -75,6 +80,7 @@ def l_bfgs_bounded(
     pnp=None,
     callback=None,
     disp=False,
+    precond=None,
 ):
     """
     Bound-constrained L-BFGS with optional index pinning.
@@ -115,6 +121,21 @@ def l_bfgs_bounded(
         ``success=True`` — use this for a custom stopping criterion.
     disp : bool, optional
         Print a per-iteration diagnostic table.
+    precond : callable, optional
+        ``precond(v)`` applies a symmetric positive definite preconditioner M
+        (approximate inverse Hessian) to ``v``, an array of the shape of
+        ``x0`` (the local slice; under MPI the operator must be applied
+        consistently across ranks, e.g. via a distributed FFT), and returns
+        an array of the same shape. Used as the initial inverse Hessian
+        ``gamma P M P`` of the two-loop recursion and for the steepest-descent
+        restarts, ``P`` = mask of the free (not box-active, not pinned)
+        components (the direction is zero on the active ones). Default
+        ``None``: the scaled identity, unchanged. Designed for smoothers
+        (e.g. a Helmholtz filter of a topology-optimization gradient, which
+        cut the evaluations 2-3x there); a near-exact inverse of a strongly
+        coupled Hessian with many active bounds can make the final approach
+        to a tight ``gtol`` slow, because P M P is not the inverse of the
+        reduced Hessian.
 
     Returns
     -------
@@ -213,8 +234,16 @@ def l_bfgs_bounded(
         )
 
     for iteration in range(1, maxiter + 1):
+        # Preconditioner restricted to the free subspace: P M P
+        H0 = None
+        if precond is not None:
+            free = _free_mask(grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask)
+
+            def H0(v, free=free):
+                return free * precond((free * v).reshape(original_shape)).reshape(-1)
+
         # L-BFGS search direction from the KKT-masked gradient (all 1D).
-        d = _twoloop_direction(r_free, s_hist, y_hist, rho_hist, pnp)
+        d = _twoloop_direction(r_free, s_hist, y_hist, rho_hist, pnp, H0=H0)
         if zero_mask is not None:
             d = np.where(zero_mask, 0.0, d)
 
@@ -228,7 +257,7 @@ def l_bfgs_bounded(
             s_hist.clear()
             y_hist.clear()
             rho_hist.clear()
-            d = -r_free.copy()
+            d = -r_free.copy() if H0 is None else -H0(r_free)
             gd = pnp.sum(r_free * d)
 
         # Projected Armijo backtracking. If the L-BFGS direction fails the
@@ -242,10 +271,10 @@ def l_bfgs_bounded(
             s_hist.clear()
             y_hist.clear()
             rho_hist.clear()
-            d = -r_free.copy()
+            d = -r_free.copy() if H0 is None else -H0(r_free)
             gd = pnp.sum(r_free * d)
-            g_norm = np.sqrt(pnp.sum(r_free * r_free))
-            alpha_init = 1.0 / g_norm if g_norm > 0 else 1.0
+            d_norm = np.sqrt(pnp.sum(d * d))
+            alpha_init = 1.0 / d_norm if d_norm > 0 else 1.0
             step = _armijo(
                 fun_grad, x, d, phi, gd, project,
                 c1=c1, max_halvings=max_halvings, alpha_init=alpha_init,

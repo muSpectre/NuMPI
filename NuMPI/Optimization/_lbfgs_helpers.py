@@ -32,11 +32,16 @@ import numpy as np
 from array_api_compat import array_namespace
 
 
-def _twoloop_direction(g, s_hist, y_hist, rho_hist, pnp):
+def _twoloop_direction(g, s_hist, y_hist, rho_hist, pnp, H0=None):
     """
     Two-loop L-BFGS recursion: returns ``-H * g`` where ``H`` is the L-BFGS
     Hessian approximation with Nocedal-Wright's ``gamma = <s, y>/<y, y>``
     initial scaling on the newest pair (identity if the history is empty).
+
+    ``H0`` (optional): callable applying a symmetric positive (semi-)definite
+    initial inverse Hessian (a preconditioner). The initial matrix is then
+    ``gamma * H0`` with ``gamma = <s, y> / <y, H0 y>`` (``H0`` alone if the
+    history is empty). ``None`` keeps the scaled identity above.
 
     Histories are most-recent-first lists.
     """
@@ -46,13 +51,36 @@ def _twoloop_direction(g, s_hist, y_hist, rho_hist, pnp):
     for k in range(n):  # newest -> oldest
         a[k] = rho_hist[k] * pnp.sum(s_hist[k] * q)
         q -= a[k] * y_hist[k]
-    if n > 0:
+    if H0 is not None:
+        if n > 0:
+            gamma = pnp.sum(s_hist[0] * y_hist[0]) / pnp.sum(y_hist[0] * H0(y_hist[0]))
+            q = gamma * H0(q)
+        else:
+            q = H0(q)
+    elif n > 0:
         gamma = pnp.sum(s_hist[0] * y_hist[0]) / pnp.sum(y_hist[0] * y_hist[0])
         q *= gamma
     for k in range(n - 1, -1, -1):  # oldest -> newest
         beta = rho_hist[k] * pnp.sum(y_hist[k] * q)
         q += (a[k] - beta) * s_hist[k]
     return -q
+
+
+def _free_mask(grad, x, lo, hi, zero_mask=None, tol_box=1e-12):
+    """
+    1.0 where ``x`` may move, 0.0 on the components that ``_kkt_residual``
+    zeroes (box-active with the gradient pointing into the bound, and
+    ``zero_mask``). Used to restrict a preconditioner to the free subspace.
+    """
+    xp = array_namespace(grad, x)
+    free = xp.ones_like(xp.asarray(grad, dtype=float))
+    if zero_mask is not None:
+        free = xp.where(zero_mask, 0.0, free)
+    if lo is not None:
+        free = xp.where((x <= lo + tol_box) & (grad >= 0.0), 0.0, free)
+    if hi is not None:
+        free = xp.where((x >= hi - tol_box) & (grad <= 0.0), 0.0, free)
+    return free
 
 
 def _kkt_residual(grad, x, lo, hi, zero_mask=None, tol_box=1e-12):
