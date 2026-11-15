@@ -134,6 +134,46 @@ def test_ccg_restart_mean_val(comm):
     parallel_assert(comm, abs(float(mean_x) - 1.0) < 1e-6)
 
 
+def test_ccg_restart_starts_from_bound(comm):
+    """
+    A starting point with every variable on the bound has an empty free set.
+    The solver must still release the variables whose gradient points into the
+    feasible region (issue #110).
+    """
+    n = 128
+    np.random.seed(0)
+    obj = MPI_Quadratic(n, pnp=Reduction(comm), xmin=np.random.normal(size=n))
+    xstart = np.zeros(obj.nb_subdomain_grid_pts)
+
+    res = ccg_restart(
+        obj.f_grad, obj.hessian_product, args=(2,),
+        x0=xstart, communicator=comm, gtol=1e-10,
+    )
+    parallel_assert(comm, res.success, res.message)
+    # The minimum of the quadratic is xmin; the bound cuts off its negative
+    # part.
+    assert_all_allclose(comm, res.x, np.maximum(obj._xmin, 0),
+                        atol=1e-8)
+
+
+def test_ccg_restart_stays_on_bound(comm):
+    """
+    If every variable is on the bound and no gradient points into the feasible
+    region, the starting point is the solution.
+    """
+    n = 128
+    obj = MPI_Quadratic(n, pnp=Reduction(comm), xmin=-np.ones(n))
+    xstart = np.zeros(obj.nb_subdomain_grid_pts)
+
+    res = ccg_restart(
+        obj.f_grad, obj.hessian_product, args=(2,),
+        x0=xstart, communicator=comm,
+    )
+    parallel_assert(comm, res.success, res.message)
+    parallel_assert(comm, res.nit == 1)
+    parallel_assert(comm, (res.x == 0).all())
+
+
 def test_ccg_restart_jac_false(comm):
     """Gradient-only objective via jac=False."""
     np.random.seed(3)
