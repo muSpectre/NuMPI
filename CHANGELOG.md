@@ -2,6 +2,14 @@ Change log for NuMPI
 ===================
 
 
+v0.18.2 (15Nov26)
+-----------------
+
+- BUG: `constrained_conjugate_gradients_with_restart` leaves a starting point that
+  has every variable on its bound: with an empty free set, it takes a projected
+  steepest-descent step on the variables whose gradient points into the feasible
+  region; before, it ran to `maxiter` without moving (#110)
+
 v0.18.1 (31Oct26)
 -----------------
 

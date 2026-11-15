@@ -184,14 +184,27 @@ def constrained_conjugate_gradients_with_restart(
             # global mean over the free indices).
             residual = residual - free_mean(residual, mask_c, nb_free)
 
+        # Indices the search direction acts on. This is the free set, unless
+        # it is empty: Polonsky & Keer release bound-active indices with the
+        # step length of the previous iteration, which is zero (or does not
+        # exist) when nothing is free. The step is then a projected
+        # steepest-descent step on the indices whose gradient points into the
+        # feasible region, with the step length of the line search along it.
+        if nb_free != 0:
+            mask_s = mask_c
+        else:
+            mask_s = residual < 0
+            delta = 0
+        nb_search = comm.sum(np.count_nonzero(mask_s))
+
         # Conjugate-direction update. delta == 0 restarts (steepest descent);
         # delta == 1 keeps conjugacy. G is a globally reduced inner product.
-        # Guard G_old == 0 (empty free set last step) so a restart stays a
+        # Guard G_old == 0 (empty search set last step) so a restart stays a
         # genuine steepest-descent step rather than 0 * inf = nan.
-        G = comm.sum(residual[mask_c] ** 2)
+        G = comm.sum(residual[mask_s] ** 2)
         beta = (G / G_old) if (delta == 1 and G_old != 0) else 0.0
-        des_dir[mask_c] = -residual[mask_c] + beta * des_dir[mask_c]
-        des_dir[np.logical_not(mask_c)] = 0
+        des_dir[mask_s] = -residual[mask_s] + beta * des_dir[mask_s]
+        des_dir[np.logical_not(mask_s)] = 0
         G_old = G
 
         # Step length alpha (TAU in the paper) from globally reduced products.
@@ -199,15 +212,15 @@ def constrained_conjugate_gradients_with_restart(
         if mean_val is not None:
             hessp_val = hessp_val - free_mean(hessp_val, mask_c, nb_free)
 
-        if nb_free != 0:
-            denominator = comm.sum(hessp_val[mask_c] * des_dir[mask_c])
+        if nb_search != 0:
+            denominator = comm.sum(hessp_val[mask_s] * des_dir[mask_s])
             if denominator == 0:
                 if communicator is None or communicator.rank == 0:
                     print("it {}: denominator for alpha is 0".format(i))
                 alpha = 0.0
             else:
                 alpha = -comm.sum(
-                    residual[mask_c] * des_dir[mask_c]) / denominator
+                    residual[mask_s] * des_dir[mask_s]) / denominator
         else:
             alpha = 0.0
 
@@ -216,7 +229,7 @@ def constrained_conjugate_gradients_with_restart(
                   "You will probably need linesearch or trust region"
                   .format(i))
 
-        x[mask_c] += alpha * des_dir[mask_c]
+        x[mask_s] += alpha * des_dir[mask_s]
 
         # New contact points; relax the iterate there and decide whether to
         # restart. The restart decision MUST be globally consistent.
