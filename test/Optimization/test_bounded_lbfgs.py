@@ -658,11 +658,13 @@ def test_precond_many_active_bounds_converges():
     def fun_grad(x):
         return 0.5 * float(x @ A @ x) - float(b @ x), A @ x - b
 
-    kw = dict(jac=True, bounds_lo=0.0, bounds_hi=1.0, gtol=1e-8, maxiter=3000)
+    # gtol 1e-6: much tighter, the Armijo decrease (~ gtol^2) drops below the round-off of f (~1e-14) and the
+    # iteration stalls on some BLAS builds
+    kw = dict(jac=True, bounds_lo=0.0, bounds_hi=1.0, gtol=1e-6, maxiter=3000)
     plain = l_bfgs_bounded(fun_grad, np.full(n, 0.5), **kw)
     M = np.linalg.inv(np.eye(n) + K)
     res = l_bfgs_bounded(fun_grad, np.full(n, 0.5), precond=lambda v: M @ v, **kw)
     assert plain.success and res.success, (plain.message, res.message)
-    assert res.fun == pytest.approx(plain.fun, rel=1e-10)
+    assert res.fun == pytest.approx(plain.fun, rel=1e-9)
     assert res.nit < plain.nit
     assert res.x.min() >= 0.0 and res.x.max() <= 1.0

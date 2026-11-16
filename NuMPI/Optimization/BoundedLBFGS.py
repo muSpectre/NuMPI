@@ -61,6 +61,13 @@ from .Result import OptimizeResult
 _log = logging.getLogger(__name__)
 
 
+def _masked_preconditioner(precond, free, shape):
+    """P M P on flat vectors: the preconditioner M = ``precond`` restricted to the free components (0/1 mask P)."""
+    def apply(v):
+        return free * precond((free * v).reshape(shape)).reshape(-1)
+    return apply
+
+
 def l_bfgs_bounded(
     fun,
     x0,
@@ -238,9 +245,7 @@ def l_bfgs_bounded(
         H0 = None
         if precond is not None:
             free = _free_mask(grad, x, lo=bounds_lo, hi=bounds_hi, zero_mask=zero_mask)
-
-            def H0(v, free=free):
-                return free * precond((free * v).reshape(original_shape)).reshape(-1)
+            H0 = _masked_preconditioner(precond, free, original_shape)
 
         # L-BFGS search direction from the KKT-masked gradient (all 1D).
         d = _twoloop_direction(r_free, s_hist, y_hist, rho_hist, pnp, H0=H0)
