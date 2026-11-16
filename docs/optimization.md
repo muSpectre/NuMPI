@@ -116,7 +116,7 @@ contains `fun`, `jac`, `max_grad` and `norm_grad`.
 l_bfgs_bounded(fun, x0, args=(), jac=None, bounds_lo=None, bounds_hi=None,
                zero_mask=None, gtol=1e-5, ftol=0.0, xtol=0.0, maxiter=500,
                maxcor=10, c1=1e-4, max_halvings=40, comm=None, pnp=None,
-               callback=None, disp=False)
+               callback=None, disp=False, precond=None)
 ```
 
 L-BFGS with box bounds, using the two-loop recursion and a projected Armijo
@@ -126,6 +126,29 @@ converges when the infinity norm of the gradient on the free (not
 bound-active) entries drops below `gtol`. If `callback(x)` returns `True`, the
 optimization stops and is reported as successful, which allows custom stopping
 criteria.
+
+**Preconditioning.** `precond(v)` applies a symmetric positive definite operator
+$M$ to an array of the shape of `x0`. The two-loop recursion then starts from
+$\gamma P M P$ instead of $\gamma I$, where $P$ is the 0/1 mask of the free
+entries and $\gamma = \langle s, y \rangle / \langle y, P M P y \rangle$;
+the steepest-descent restarts use $-P M P r$. `precond=None` gives the
+unpreconditioned iterates exactly. A smoother as $M$ helps when the gradient is
+rough, e.g. in phase-field topology optimization, where a Helmholtz filter
+$(I + c\,\eta^2 (-\Delta))^{-1}$ cut the number of objective evaluations
+2-3x:
+
+```python
+import numpy as np
+from NuMPI.Optimization import l_bfgs_bounded
+
+k2 = ...  # squared wave numbers of the grid, shape of x0 (FFT layout)
+
+def helmholtz(v):
+    return np.fft.ifftn(np.fft.fftn(v) / (1 + c * eta**2 * k2)).real
+
+result = l_bfgs_bounded(fun, x0, jac=True, bounds_lo=0.0, bounds_hi=1.0,
+                        precond=helmholtz)
+```
 
 ## `l_bfgs_projected`
 

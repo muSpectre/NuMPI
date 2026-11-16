@@ -2,6 +2,18 @@ Change log for NuMPI
 ===================
 
 
+v0.18.3 (not yet released)
+--------------------------
+
+- ENH: `l_bfgs_bounded(precond=...)`: preconditioned initial inverse Hessian
+  gamma P M P instead of gamma I, with M = `precond` (an SPD operator, e.g. a
+  Helmholtz smoother of a topology-optimization gradient), P the 0/1 mask of the
+  free variables and gamma = <s, y> / <y, P M P y>; steepest-descent restarts use
+  -P M P r. `precond=None` reproduces the previous iterates exactly
+- BUG: `l_bfgs_bounded` skips the `xtol` test on its first (unscaled
+  steepest-descent) step; for small gradients (e.g. of order h^3 on fine grids)
+  it had stopped at iteration 1 as "converged"
+
 v0.18.2 (15Nov26)
 -----------------
 

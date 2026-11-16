@@ -514,3 +514,157 @@ def test_nd_x0_callback_receives_original_shape():
     )
     assert res.success, res.message
     assert seen and all(s == shape for s in seen)
+
+
+def test_xtol_not_on_first_steepest_descent_step():
+    """A small objective scale (gradient ~ voxel volume on a fine grid) makes the unscaled first step shorter than
+    xtol; the run must not stop there but reach the minimizer."""
+    rng = np.random.default_rng(12)
+    N = 64
+    y = rng.uniform(0.2, 0.8, size=N)
+    scale = 1e-6
+
+    def fun(x):
+        return 0.5 * scale * np.sum((x - y) ** 2), scale * (x - y)
+
+    res = l_bfgs_bounded(fun, np.zeros(N), jac=True, bounds_lo=0, bounds_hi=1, gtol=0, ftol=0, xtol=1e-3,
+                         maxiter=200)
+    assert res.nit > 1
+    np.testing.assert_allclose(res.x, y, atol=1e-2)
+
+
+# ----------------------------------------------------------------------------
+# Preconditioned initial inverse Hessian (``precond``)
+# ----------------------------------------------------------------------------
+
+
+def test_precond_identity_matches_unpreconditioned():
+    """precond = identity gives the iterates of the unpreconditioned solver (unbounded: P = I)."""
+    rng = np.random.default_rng(7)
+    N = 64
+    y = rng.normal(size=N)
+    w = np.logspace(0, 3, N)
+    res0 = l_bfgs_bounded(_quad_weighted(y, w), np.zeros(N), jac=True, gtol=1e-10)
+    res1 = l_bfgs_bounded(_quad_weighted(y, w), np.zeros(N), jac=True, gtol=1e-10, precond=lambda v: v.copy())
+    assert res0.success and res1.success
+    assert res0.nit == res1.nit
+    np.testing.assert_allclose(res1.x, res0.x, atol=1e-12)
+
+
+def test_precond_exact_inverse_hessian_one_step():
+    """With M = H^-1 the first quasi-Newton step is the Newton step: converged after one iteration."""
+    rng = np.random.default_rng(8)
+    N = 64
+    y = rng.normal(size=N)
+    w = np.logspace(0, 4, N)
+    res_plain = l_bfgs_bounded(_quad_weighted(y, w), np.zeros(N), jac=True, gtol=1e-10, maxiter=1000)
+    res = l_bfgs_bounded(_quad_weighted(y, w), np.zeros(N), jac=True, gtol=1e-10, precond=lambda v: v / w)
+    assert res.success, res.message
+    assert res.nit == 1
+    assert res_plain.nit > 10 * res.nit
+    np.testing.assert_allclose(res.x, y, atol=1e-10)
+
+
+def test_precond_with_box_matches_clip():
+    """Separable weighted quadratic with a box: the minimiser is clip(y, lo, hi), also preconditioned."""
+    rng = np.random.default_rng(9)
+    N = 128
+    y = rng.normal(size=N) * 0.8 + 0.4
+    w = np.logspace(0, 3, N)
+    res = l_bfgs_bounded(_quad_weighted(y, w), np.full(N, 0.5), jac=True, bounds_lo=0.0, bounds_hi=1.0,
+                         gtol=1e-10, precond=lambda v: v / w)
+    assert res.success, res.message
+    np.testing.assert_allclose(res.x, np.clip(y, 0.0, 1.0), atol=1e-8)
+    assert res.x.min() >= 0.0 and res.x.max() <= 1.0
+
+
+def test_precond_fft_helmholtz_on_laplacian_problem():
+    """
+    f = 1/2 x^T (a I + K) x - b^T x with K the periodic 1D Laplacian stencil (condition ~ 4 / a): an FFT
+    Helmholtz preconditioner (a + K_hat)^-1 makes L-BFGS converge in a few iterations.
+    """
+    N, a = 256, 1e-3
+    rng = np.random.default_rng(10)
+    b = rng.normal(size=N)
+    K_hat = 2 - 2 * np.cos(2 * np.pi * np.fft.fftfreq(N))
+
+    def fun_grad(x):
+        Ax = a * x + 2 * x - np.roll(x, 1) - np.roll(x, -1)
+        return 0.5 * float(x @ Ax) - float(b @ x), Ax - b
+
+    def helmholtz(v):
+        return np.real(np.fft.ifft(np.fft.fft(v) / (a + K_hat)))
+
+    x_exact = helmholtz(b)                                     # the preconditioner is the exact inverse here
+    res_plain = l_bfgs_bounded(fun_grad, np.zeros(N), jac=True, gtol=1e-4, maxiter=5000)
+    res = l_bfgs_bounded(fun_grad, np.zeros(N), jac=True, gtol=1e-8, precond=helmholtz)
+    assert res.success, res.message
+    assert res.nit <= 3
+    assert res_plain.nit > 20                                  # unpreconditioned: many iterations even to 1e-4
+    np.testing.assert_allclose(res.x, x_exact, atol=1e-8 * np.abs(x_exact).max())
+
+
+def test_precond_receives_original_shape():
+    """precond gets (and returns) arrays of the shape of x0, like fun and callback."""
+    rng = np.random.default_rng(11)
+    y = rng.normal(size=(8, 8))
+    w = np.logspace(0, 2, 64).reshape(8, 8)
+    shapes = []
+
+    def fun_grad(x):
+        d = x - y
+        return 0.5 * float(np.sum(w * d * d)), w * d
+
+    def precond(v):
+        shapes.append(v.shape)
+        return v / w
+
+    res = l_bfgs_bounded(fun_grad, np.zeros((8, 8)), jac=True, gtol=1e-10, precond=precond)
+    assert res.success, res.message
+    assert shapes and all(s == (8, 8) for s in shapes)
+    np.testing.assert_allclose(res.x, y, atol=1e-8)
+
+
+def test_mpi_precond_box(comm):
+    """Distributed weighted quadratic with a box, local diagonal preconditioner: oracle clip(y, 0, 1)."""
+    pnp = Reduction(comm)
+    N_global = 512
+    rng = np.random.default_rng(12)
+    y_global = rng.normal(size=N_global)
+    w_global = np.logspace(0, 3, N_global)
+    y_local = _distribute(y_global, comm)
+    w_local = _distribute(w_global, comm)
+
+    def fun_grad(x):
+        d = x - y_local
+        return 0.5 * pnp.sum(w_local * d * d).item(), w_local * d
+
+    res = l_bfgs_bounded(fun_grad, np.full_like(y_local, 0.5), jac=True, bounds_lo=0.0, bounds_hi=1.0,
+                         comm=comm, gtol=1e-10, precond=lambda v: v / w_local)
+    parallel_assert(comm, res.success, res.message)
+    assert_all_allclose(comm, res.x, np.clip(y_local, 0.0, 1.0), atol=1e-8)
+
+
+def test_precond_many_active_bounds_converges():
+    """
+    Laplacian-type quadratic with ~60 % of the components on the box: a smoothing preconditioner (I + K)^-1 reaches
+    the minimum to gtol in fewer iterations than the scaled identity.
+    """
+    n = 200
+    A = 2 * np.eye(n) - np.eye(n, k=1) - np.eye(n, k=-1) + 1e-2 * np.eye(n)
+    K = A - 1e-2 * np.eye(n)
+    b = np.random.default_rng(0).normal(size=n)
+
+    def fun_grad(x):
+        return 0.5 * float(x @ A @ x) - float(b @ x), A @ x - b
+
+    # gtol 1e-6: much tighter, the Armijo decrease (~ gtol^2) drops below the round-off of f (~1e-14) and the
+    # iteration stalls on some BLAS builds
+    kw = dict(jac=True, bounds_lo=0.0, bounds_hi=1.0, gtol=1e-6, maxiter=3000)
+    plain = l_bfgs_bounded(fun_grad, np.full(n, 0.5), **kw)
+    M = np.linalg.inv(np.eye(n) + K)
+    res = l_bfgs_bounded(fun_grad, np.full(n, 0.5), precond=lambda v: M @ v, **kw)
+    assert plain.success and res.success, (plain.message, res.message)
+    assert res.fun == pytest.approx(plain.fun, rel=1e-9)
+    assert res.nit < plain.nit
+    assert res.x.min() >= 0.0 and res.x.max() <= 1.0
